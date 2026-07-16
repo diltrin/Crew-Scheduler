@@ -618,38 +618,14 @@
 function jobCardHtml(job, opts){ 
   opts = opts || {}; 
   
-  // FIX: Added fallback || [] in case crewIds is missing/undefined
-  const crewIds = Array.isArray(job.crewIds) ? job.crewIds : [];
-  
-  const crewTags = crewIds.map(cid => { 
-    const crew = state.crews.find(c=>c.id===cid); 
-    if(!crew) return ''; 
-    return `<span class="job-crew-tag type-${crew.type}" style="--c:${colorFor(crew)}">${escapeHtml(crew.name)}<button type="button" data-action="unassignCrew" data-job-id="${job.id}" data-crew-id="${crew.id}" title="Remove crew from job">✕</button></span>`; 
-  }).join(''); 
-
-  const linkBtn = job.jobtreadLink ? `<a class="icon-btn" href="${escapeAttr(job.jobtreadLink)}" target="_blank" rel="noopener" title="Open in JobTread">↗ JT</a>` : ''; 
-  const removeDayBtn = opts.dayContext ? `<button type="button" class="icon-btn danger" data-action="removeDate" data-job-id="${job.id}" data-date="${opts.dayContext}" title="Remove from this day only">📅✕</button>` : ''; 
-  const dates = Array.isArray(job.dates) ? job.dates : []; 
-  const dateChips = (!opts.dayContext && dates.length) ? `<div class="job-dates">${dates.slice().sort().map(d => `<span class="job-date-tag">${d.slice(5)}<button type="button" data-action="removeDate" data-job-id="${job.id}" data-date="${d}" title="Remove this day">✕</button></span>`).join('')}</div>` : ''; 
-
-  return ` 
-    <div class="job-card type-${job.type}" style="--c:${colorFor(job)}" draggable="true" data-job-id="${job.id}"> 
-      <div class="job-card-head"> 
-        <span class="job-name">${escapeHtml(job.name)}</span> 
-        <span class="job-actions"> 
-          ${linkBtn} 
-          <button type="button" class="icon-btn" data-action="editJob" data-job-id="${job.id}" title="Edit job">✎</button> 
-          ${removeDayBtn} 
-          <button type="button" class="icon-btn danger" data-action="deleteJobQuick" data-job-id="${job.id}" title="Delete job entirely">✕</button> 
-        </span> 
-      </div> 
-      <div class="job-crews">${crewTags}</div> 
-      <div class="job-drop-crew" data-dropzone="crew" data-job-id="${job.id}">drop a crew here</div> 
-      ${dateChips} 
-    </div>`; 
-}
-
-  
+  opts = opts || {};
+    // Use optional chaining and nullish coalescing to ensure we always have an array
+    const crewTags = (job.crewIds ?? []).map(cid => {
+      const crew = state.crews.find(c=>c.id===cid);
+      if(!crew) return '';
+      return `<span class="job-crew-tag type-${crew.type}" style="--c:${colorFor(crew)}">${escapeHtml(crew.name)}<button type="button" data-action="unassignCrew" data-job-id="${job.id}" data-crew-id="${crew.id}" title="Remove crew from job">✕</button></span>`;
+    }).join('');
+ 
   // dateChips: true when rendering in the sidebar (shows every day this job is scheduled on).
   // Calendar-cell instances skip the date-chip row (the day is already implied) but keep
   // a "remove from this day" action of their own.
