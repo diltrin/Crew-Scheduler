@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crew Schedule — Tile &amp; Stone</title>
+
+<!--
+  ============================================================================
+  SETUP CHECKLIST — read this before uploading to GitHub Pages
+  ============================================================================
+  1. Go to https://console.firebase.google.com -> your project -> Project
+     settings (gear icon) -> General -> "Your apps" -> Web app.
+     Copy the firebaseConfig object it gives you and paste it into the
+     spot marked "PASTE YOUR FIREBASE CONFIG HERE" near the bottom of
+     this file (search for that text).
+
+  2. In the Firebase console, go to Build -> Realtime Database -> Create
+     Database. Start it in "test mode" while you're building, then before
+     you actually rely on this at work, lock it down. See the "SECURITY"
+     note near the config section below for a starter rule set.
+
+  3. Save this file as index.html and push it to the root of your GitHub
+     Pages repo (or the /docs folder, depending on how your Pages source
+     is configured). No build step, no npm install — it's a single static
+     file.
+
+  4. Everything (crews, jobs, and the schedule) is stored in Firebase, so
+     anyone who opens the page sees live updates as your team makes
+     changes. Nothing is saved to this specific browser only.
+  ============================================================================
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:            #101a23;
+    --panel:         #16232f;
+    --panel-raised:  #1d2f3d;
+    --card:          #223446;
+    --line:          #2c4054;
+    --line-soft:     #24374a;
+    --ink:           #eef2f5;
+    --ink-dim:       #93a7b8;
+    --ink-faint:     #5f7386;
+    --chalk-blue:    #7fc8e8;
+    --chalk-blue-dim:#3d6a80;
+    --grout-gold:    #d9a441;
+    --danger:        #d9614a;
+    --radius:        7px;
+    --font-head: 'Oswald', 'Arial Narrow', sans-serif;
+    --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  *{ box-sizing: border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    background:
+      linear-gradient(var(--line-soft) 1px, transparent 1px) 0 0/100% 34px,
+      linear-gradient(90deg, var(--line-soft) 1px, transparent 1px) 0 0/34px 100%,
+      var(--bg);
+    background-attachment: fixed;
+    color:var(--ink);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{ background:var(--chalk-blue); color:#0c1620; }
+
+  button{ font-family:inherit; cursor:pointer; }
+  input{ font-family:inherit; }
+  a{ color:var(--chalk-blue); }
+
+  /* focus visibility for keyboard users */
+  button:focus-visible, input:focus-visible, [tabindex]:focus-visible{
+    outline: 2px solid var(--chalk-blue);
+    outline-offset: 2px;
+  }
+
+  #app{ max-width:1400px; margin:0 auto; padding:20px 20px 56px; }
+
+  /* ---------- Header ---------- */
+  header.top{
+    display:flex; align-items:baseline; justify-content:space-between;
+    gap:16px; flex-wrap:wrap; margin-bottom:18px;
+    border-bottom:2px solid var(--line); padding-bottom:14px;
+  }
+  header.top .title-block .eyebrow{
+    font-family:var(--font-head); font-size:12px; letter-spacing:.22em;
+    text-transform:uppercase; color:var(--grout-gold); margin:0 0 2px;
+  }
+  header.top h1{
+    font-family:var(--font-head); font-weight:600; font-size:28px;
+    letter-spacing:.01em; margin:0; text-transform:uppercase;
+  }
+  #syncState{
+    font-size:12px; color:var(--ink-faint); display:flex; align-items:center; gap:6px;
+  }
+  #syncState .dot{
+    width:8px; height:8px; border-radius:50%; background:var(--ink-faint); display:inline-block;
+  }
+  #syncState.ok .dot{ background:#5cc98a; }
+  #syncState.err .dot{ background:var(--danger); }
+
+  /* ---------- Panels (shared look) ---------- */
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+  }
+  .panel > .panel-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 14px; border-bottom:1px solid var(--line);
+    background:var(--panel-raised); border-radius:var(--radius) var(--radius) 0 0;
+  }
+  .panel > .panel-head h2{
+    font-family:var(--font-head); font-size:14px; letter-spacing:.14em;
+    text-transform:uppercase; margin:0; color:var(--ink);
+  }
+  .panel > .panel-head .count{
+    font-size:11px; color:var(--ink-faint); font-variant-numeric:tabular-nums;
+  }
+
+  /* ---------- Crews bar (top, full width) ---------- */
+  .crews-panel{ margin-bottom:16px; }
+  .crews-body{
+    padding:14px; display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start;
+  }
+  .add-crew-form{
+    display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+    padding-right:18px; border-right:1px dashed var(--line);
+  }
+  .crew-list{
+    display:flex; gap:10px; flex-wrap:wrap; flex:1; min-height:38px; align-items:center;
+  }
+  .crew-list:empty::after{
+    content:"No crews yet — add one on the left.";
+    color:var(--ink-faint); font-size:13px; font-style:italic;
+  }
+
+  .chip-input{
+    background:var(--card); border:1px solid var(--line); color:var(--ink);
+    border-radius:5px; padding:8px 10px; font-size:13px; min-width:140px;
+  }
+  input[type="color"].swatch-input{
+    -webkit-appearance:none; appearance:none; width:38px; height:36px;
+    border:1px solid var(--line); border-radius:5px; padding:2px; background:var(--card); cursor:pointer;
+  }
+  input[type="color"].swatch-input::-webkit-color-swatch-wrapper{ padding:2px; }
+  input[type="color"].swatch-input::-webkit-color-swatch{ border:none; border-radius:3px; }
+
+  .btn{
+    border:1px solid var(--line); background:var(--card); color:var(--ink);
+    border-radius:5px; padding:8px 14px; font-size:13px; font-weight:600;
+    letter-spacing:.02em;
+  }
+  .btn:hover{ border-color:var(--chalk-blue); color:var(--chalk-blue); }
+  .btn.primary{ background:var(--chalk-blue); color:#0c1620; border-color:var(--chalk-blue); }
+  .btn.primary:hover{ filter:brightness(1.08); color:#0c1620; }
+
+  /* Crew chip — draggable, min touch target */
+  .crew-chip{
+    display:flex; align-items:center; gap:8px;
+    padding:8px 10px 8px 12px; border-radius:20px;
+    background:var(--card); border:1px solid var(--line);
+    font-size:13px; font-weight:600; cursor:grab; user-select:none;
+    min-height:36px;
+    position:relative;
+  }
+  .crew-chip:active{ cursor:grabbing; }
+  .crew-chip .swatch{ width:12px; height:12px; border-radius:50%; flex:none; }
+  .crew-chip .remove{
+    background:none; border:none; color:var(--ink-faint); font-size:15px; line-height:1;
+    padding:4px; margin:-4px -4px -4px 2px; border-radius:50%;
+  }
+  .crew-chip .remove:hover{ color:var(--danger); background:rgba(217,97,74,.15); }
+  .crew-chip.dragging{ opacity:.35; }
+
+  /* ---------- Layout: jobs (left) + calendar (main) ---------- */
+  .layout{ display:flex; gap:16px; align-items:flex-start; }
+
+  .jobs-panel{ width:300px; flex:none; }
+  .jobs-body{ padding:12px; display:flex; flex-direction:column; gap:10px; }
+
+  .add-job-form{
+    display:flex; flex-direction:column; gap:8px;
+    padding:12px; border:1px dashed var(--line); border-radius:6px;
+    background:var(--panel-raised);
+  }
+  .add-job-form .row{ display:flex; gap:8px; }
+  .add-job-form input.chip-input{ width:100%; min-width:0; }
+  .add-job-form .row input[type="color"]{ flex:none; }
+  .add-job-form .row input[type="text"]{ flex:1; }
+
+  .job-list{ display:flex; flex-direction:column; gap:10px; }
+  .job-list:empty::after{
+    content:"No jobs yet — create one above.";
+    color:var(--ink-faint); font-size:13px; font-style:italic; padding:4px 2px;
+  }
+
+  .job-card{
+    background:var(--card); border:1px solid var(--line); border-left:5px solid var(--job-color, var(--chalk-blue));
+    border-radius:6px; padding:10px 10px 10px 12px; cursor:grab; user-select:none;
+  }
+  .job-card:active{ cursor:grabbing; }
+  .job-card.dragging{ opacity:.35; }
+  .job-card.crew-drop-hover{ outline:2px solid var(--grout-gold); outline-offset:2px; }
+
+  .job-card .job-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:6px; }
+  .job-card .job-name{ font-weight:700; font-size:14px; line-height:1.3; }
+  .job-card .remove{
+    background:none; border:none; color:var(--ink-faint); font-size:15px; line-height:1;
+    padding:4px; border-radius:50%; flex:none;
+  }
+  .job-card .remove:hover{ color:var(--danger); background:rgba(217,97,74,.15); }
+
+  .job-card .job-link{
+    font-size:11.5px; color:var(--chalk-blue); text-decoration:none; display:inline-flex;
+    align-items:center; gap:4px; margin-top:3px;
+  }
+  .job-card .job-link:hover{ text-decoration:underline; }
+  .job-card .no-link{ font-size:11.5px; color:var(--ink-faint); margin-top:3px; display:block; }
+
+  .job-card .crew-drop-zone{
+    margin-top:8px; min-height:30px; display:flex; flex-wrap:wrap; gap:6px;
+    padding:6px; border-radius:5px; border:1px dashed transparent;
+  }
+  .job-card .crew-drop-zone.empty{ border-color:var(--line); }
+  .job-card .crew-drop-zone.empty::after{
+    content:"Drop a crew here to assign"; font-size:11px; color:var(--ink-faint); font-style:italic;
+  }
+  .mini-crew{
+    display:flex; align-items:center; gap:5px; font-size:11px; font-weight:600;
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:3px 6px 3px 8px;
+  }
+  .mini-crew .swatch{ width:8px; height:8px; border-radius:50%; }
+  .mini-crew .unassign{
+    background:none; border:none; color:var(--ink-faint); font-size:12px; line-height:1; padding:2px;
+  }
+  .mini-crew .unassign:hover{ color:var(--danger); }
+
+  /* ---------- Calendar ---------- */
+  .calendar-wrap{ flex:1; min-width:0; }
+  .calendar-panel{ overflow:hidden; }
+  .calendar-controls{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel-raised);
+    border-radius:var(--radius) var(--radius) 0 0;
+  }
+  .calendar-controls .nav{ display:flex; gap:6px; align-items:center; }
+  .calendar-controls h2{
+    font-family:var(--font-head); font-size:18px; letter-spacing:.05em; margin:0;
+    text-transform:uppercase; min-width:190px; text-align:center;
+  }
+  .nav-btn{
+    background:var(--card); border:1px solid var(--line); color:var(--ink);
+    width:32px; height:32px; border-radius:5px; font-size:15px; display:flex;
+    align-items:center; justify-content:center;
+  }
+  .nav-btn:hover{ border-color:var(--chalk-blue); color:var(--chalk-blue); }
+
+  .weekday-row{
+    display:grid; grid-template-columns:repeat(7,1fr);
+    border-bottom:1px solid var(--line);
+  }
+  .weekday-row div{
+    padding:8px 6px; font-family:var(--font-head); font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--ink-faint); text-align:center;
+  }
+
+  .calendar-grid{
+    display:grid; grid-template-columns:repeat(7,1fr);
+    grid-auto-rows:minmax(128px,auto);
+  }
+  .day-cell{
+    border-right:1px solid var(--line); border-bottom:1px solid var(--line);
+    padding:6px; display:flex; flex-direction:column; gap:5px; min-height:128px;
+    background:var(--panel);
+    transition:background .12s ease;
+  }
+  .day-cell:nth-child(7n){ border-right:none; }
+  .day-cell.other-month{ background:#0e1720; }
+  .day-cell.other-month .date-num{ color:var(--ink-faint); }
+  .day-cell.drop-hover{ background:var(--panel-raised); box-shadow:inset 0 0 0 2px var(--chalk-blue); }
+  .day-cell.today{ background:#182a37; }
+  .day-cell.today .date-num{ color:var(--chalk-blue); }
+
+  .date-num{
+    font-family:var(--font-head); font-size:13px; font-weight:600; color:var(--ink-dim);
+    display:flex; align-items:center; gap:6px;
+  }
+  .date-num .today-flag{
+    font-size:9px; letter-spacing:.1em; background:var(--chalk-blue); color:#0c1620;
+    padding:1px 5px; border-radius:8px; font-weight:700;
+  }
+
+  .day-jobs{ display:flex; flex-direction:column; gap:5px; flex:1; }
+
+  .sched-chip{
+    background:var(--sched-color, var(--chalk-blue));
+    color:#0c1620;
+    border-radius:5px; padding:5px 7px; font-size:12px; font-weight:700;
+    display:flex; flex-direction:column; gap:3px; cursor:grab; position:relative;
+    min-height:30px; justify-content:center;
+  }
+  .sched-chip:active{ cursor:grabbing; }
+  .sched-chip.dragging{ opacity:.35; }
+  .sched-chip .sc-top{ display:flex; align-items:center; justify-content:space-between; gap:4px; }
+  .sched-chip .sc-name{ line-height:1.2; overflow-wrap:anywhere; }
+  .sched-chip .sc-remove{
+    background:rgba(12,22,32,.18); border:none; color:#0c1620; font-size:12px; line-height:1;
+    padding:2px 5px; border-radius:50%; flex:none;
+  }
+  .sched-chip .sc-remove:hover{ background:rgba(12,22,32,.4); }
+  .sched-chip .sc-crews{ display:flex; flex-wrap:wrap; gap:3px; }
+  .sched-chip .sc-crew-dot{
+    font-size:10px; font-weight:700; padding:1px 5px; border-radius:8px;
+    background:rgba(12,22,32,.22); display:inline-flex; align-items:center; gap:3px;
+  }
+  .sched-chip .sc-crew-dot i{ width:6px; height:6px; border-radius:50%; display:inline-block; }
+  .sched-chip a.sc-link{ color:#0c1620; text-decoration:underline; font-weight:700; }
+
+  .day-cell.drop-hover .day-jobs{ outline:1px dashed var(--chalk-blue-dim); border-radius:4px; }
+
+  footer.hint{
+    margin-top:22px; font-size:12px; color:var(--ink-faint); line-height:1.6;
+    border-top:1px solid var(--line); padding-top:12px;
+  }
+
+  @media (max-width: 860px){
+    .layout{ flex-direction:column; }
+    .jobs-panel{ width:100%; }
+    .add-crew-form{ border-right:none; padding-right:0; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header class="top">
+    <div class="title-block">
+      <p class="eyebrow">Tile &amp; Stone — Field Ops</p>
+      <h1>Crew Schedule</h1>
+    </div>
+    <div id="syncState"><span class="dot"></span><span id="syncText">Connecting…</span></div>
+  </header>
+
+  <!-- ===================== CREWS (top bar) ===================== -->
+  <section class="panel crews-panel" id="crewsPanel">
+    <div class="panel-head">
+      <h2>Crews</h2>
+      <span class="count" id="crewCount">0</span>
+    </div>
+    <div class="crews-body">
+      <form class="add-crew-form" id="addCrewForm">
+        <input class="chip-input" id="crewNameInput" type="text" placeholder="Crew name" maxlength="40" required>
+        <input class="swatch-input" id="crewColorInput" type="color" value="#7fc8e8" title="Crew color">
+        <button class="btn primary" type="submit">Add Crew</button>
+      </form>
+      <div class="crew-list" id="crewList"></div>
+    </div>
+  </section>
+
+  <div class="layout">
+
+    <!-- ===================== JOBS (left) ===================== -->
+    <section class="panel jobs-panel" id="jobsPanel">
+      <div class="panel-head">
+        <h2>Jobs</h2>
+        <span class="count" id="jobCount">0</span>
+      </div>
+      <div class="jobs-body">
+        <form class="add-job-form" id="addJobForm">
+          <input class="chip-input" id="jobNameInput" type="text" placeholder="Job name" maxlength="60" required>
+          <div class="row">
+            <input class="swatch-input" id="jobColorInput" type="color" value="#d9a441" title="Job color">
+            <input class="chip-input" id="jobLinkInput" type="text" placeholder="JobTread link (optional)">
+          </div>
+          <button class="btn primary" type="submit">Add Job</button>
+        </form>
+        <div class="job-list" id="jobList"></div>
+      </div>
+    </section>
+
+    <!-- ===================== CALENDAR (main) ===================== -->
+    <section class="calendar-wrap">
+      <div class="panel calendar-panel">
+        <div class="calendar-controls">
+          <div class="nav">
+            <button class="nav-btn" id="prevMonthBtn" title="Previous month">‹</button>
+            <button class="btn" id="todayBtn">Today</button>
+            <button class="nav-btn" id="nextMonthBtn" title="Next month">›</button>
+          </div>
+          <h2 id="monthLabel">Month Year</h2>
+          <div style="width:110px"></div>
+        </div>
+        <div class="weekday-row">
+          <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+        </div>
+        <div class="calendar-grid" id="calendarGrid"></div>
+      </div>
+
+      <footer class="hint">
+        Drag a <strong>crew</strong> chip onto a <strong>job</strong> card to assign it. Drag a
+        <strong>job</strong> card onto a calendar date to schedule it — the job stays in the Jobs
+        box so you can schedule it again on other dates. Drag a scheduled chip on the calendar to
+        move it to a different date. Use the small × to remove something; crews and jobs are only
+        removed from their boxes when you delete them there.
+      </footer>
+    </section>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- Firebase SDK (compat build — works with plain <script> tags) -->
+<!-- ============================================================ -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+
+<script>
+/* ================================================================
+   FIREBASE CONFIG
+   ================================================================
+   PASTE YOUR FIREBASE CONFIG HERE — replace the object below with
+   the one from Firebase console -> Project settings -> Your apps.
+   It will look like this (values are examples, use your own):
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAuzM3ABsrtRvLdFWjNWDCG-hXnZCDBS3c",
+  authDomain: "tile-and-slab-crews-schedule.firebaseapp.com",
+  databaseURL: "https://tile-and-slab-crews-schedule-default-rtdb.firebaseio.com",
+  projectId: "tile-and-slab-crews-schedule",
+  storageBucket: "tile-and-slab-crews-schedule.firebasestorage.app",
+  messagingSenderId: "666482804709",
+  appId: "1:666482804709:web:cc50bda128bcfc3f4c110c",
+  measurementId: "G-F9PY8Z3ESV"
+};
+
+   IMPORTANT: databaseURL must be present and point at a Realtime
+   Database (not Firestore). If you created your project without a
+   Realtime Database yet, go to Build -> Realtime Database -> Create
+   Database in the Firebase console first, then copy databaseURL from
+   there.
+
+   SECURITY: this config is safe to publish (it identifies your
+   project, it isn't a secret), but your DATABASE RULES control who
+   can read/write. For a quick start while testing, in Firebase
+   console -> Realtime Database -> Rules, use:
+
+     {
+       "rules": {
+         ".read": true,
+         ".write": true
+       }
+     }
+
+   That allows anyone with the link to edit the schedule, which is
+   fine for a private crew but not once this is public. Before
+   relying on this at work, add Firebase Authentication (e.g. a
+   simple email/password sign-in for your office) and rules like:
+
+     {
+       "rules": {
+         ".read": "auth != null",
+         ".write": "auth != null"
+       }
+     }
+
+   This starter file does not include a login screen — that's the
+   next thing to add once the calendar itself is working the way
+   you want.
+*/
+const firebaseConfig = {
+  apiKey: "AIzaSyAuzM3ABsrtRvLdFWjNWDCG-hXnZCDBS3c",
+  authDomain: "tile-and-slab-crews-schedule.firebaseapp.com",
+  databaseURL: "https://tile-and-slab-crews-schedule-default-rtdb.firebaseio.com",
+  projectId: "tile-and-slab-crews-schedule",
+  storageBucket: "tile-and-slab-crews-schedule.firebasestorage.app",
+  messagingSenderId: "1:666482804709:web:cc50bda128bcfc3f4c110c",
+  appId: "G-F9PY8Z3ESV"
+};
+/* ================================================================ */
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+const crewsRef    = db.ref('crews');
+const jobsRef      = db.ref('jobs');
+const scheduleRef  = db.ref('schedule');
+
+const syncState = document.getElementById('syncState');
+const syncText  = document.getElementById('syncText');
+db.ref('.info/connected').on('value', snap => {
+  const connected = snap.val() === true;
+  syncState.className = connected ? 'ok' : 'err';
+  syncText.textContent = connected ? 'Synced' : 'Connecting…';
+});
+
+/* ----------------------------------------------------------------
+   Local state — mirrors Firebase, kept up to date via onValue
+   ---------------------------------------------------------------- */
+let crews = {};      // { crewId: { name, color } }
+let jobs = {};        // { jobId: { name, color, link, crewIds:{crewId:true} } }
+let schedule = {};     // { 'YYYY-MM-DD': { entryId: { jobId } } }
+
+let viewYear, viewMonth; // calendar being displayed (0-indexed month)
+const today = new Date();
+
+const PALETTE = ['#7fc8e8','#d9a441','#8fbf7f','#c78fd9','#e0896b','#5fb8b0','#d97fa8','#a3b85f'];
+function randomColor(seed){
+  return PALETTE[Math.abs(hashStr(seed)) % PALETTE.length];
+}
+function hashStr(s){
+  let h = 0;
+  for(let i=0;i<s.length;i++){ h = (h<<5) - h + s.charCodeAt(i); h |= 0; }
+  return h;
+}
+function pad2(n){ return String(n).padStart(2,'0'); }
+function dateKey(y,m,d){ return `${y}-${pad2(m+1)}-${pad2(d)}`; }
+function escapeHtml(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function normalizeUrl(url){
+  if(!url) return '';
+  url = url.trim();
+  if(!url) return '';
+  if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  return url;
+}
+
+/* ----------------------------------------------------------------
+   Firebase listeners
+   ---------------------------------------------------------------- */
+crewsRef.on('value', snap => { crews = snap.val() || {}; renderCrews(); renderJobs(); renderCalendar(); });
+jobsRef.on('value', snap => { jobs = snap.val() || {}; renderJobs(); renderCalendar(); });
+scheduleRef.on('value', snap => { schedule = snap.val() || {}; renderCalendar(); });
+
+/* ----------------------------------------------------------------
+   CREWS — add / remove / render
+   ---------------------------------------------------------------- */
+document.getElementById('addCrewForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const nameInput = document.getElementById('crewNameInput');
+  const colorInput = document.getElementById('crewColorInput');
+  const name = nameInput.value.trim();
+  if(!name) return;
+  const newRef = crewsRef.push();
+  newRef.set({ name, color: colorInput.value, createdAt: Date.now() });
+  nameInput.value = '';
+  colorInput.value = randomColor(name + Date.now());
+  nameInput.focus();
+});
+
+function removeCrew(crewId){
+  const crew = crews[crewId];
+  const ok = confirm(`Remove crew "${crew ? crew.name : ''}"? This unassigns it from any jobs.`);
+  if(!ok) return;
+  crewsRef.child(crewId).remove();
+  // cascade: unassign from every job
+  Object.entries(jobs).forEach(([jobId, job]) => {
+    if(job.crewIds && job.crewIds[crewId]){
+      jobsRef.child(jobId).child('crewIds').child(crewId).remove();
+    }
+  });
+}
+
+function renderCrews(){
+  const list = document.getElementById('crewList');
+  const ids = Object.keys(crews);
+  document.getElementById('crewCount').textContent = ids.length;
+  list.innerHTML = '';
+  ids.forEach(crewId => {
+    const crew = crews[crewId];
+    const chip = document.createElement('div');
+    chip.className = 'crew-chip';
+    chip.draggable = true;
+    chip.dataset.crewId = crewId;
+    chip.innerHTML = `
+      <span class="swatch" style="background:${escapeHtml(crew.color)}"></span>
+      <span class="label">${escapeHtml(crew.name)}</span>
+      <button type="button" class="remove" title="Remove crew" aria-label="Remove crew">×</button>
+    `;
+    chip.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('application/crew', crewId);
+      e.dataTransfer.effectAllowed = 'copy';
+      chip.classList.add('dragging');
+    });
+    chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+    chip.querySelector('.remove').addEventListener('click', () => removeCrew(crewId));
+    list.appendChild(chip);
+  });
+}
+
+/* ----------------------------------------------------------------
+   JOBS — add / remove / assign crews / render
+   ---------------------------------------------------------------- */
+document.getElementById('addJobForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const nameInput = document.getElementById('jobNameInput');
+  const colorInput = document.getElementById('jobColorInput');
+  const linkInput = document.getElementById('jobLinkInput');
+  const name = nameInput.value.trim();
+  if(!name) return;
+  const newRef = jobsRef.push();
+  newRef.set({
+    name,
+    color: colorInput.value,
+    link: normalizeUrl(linkInput.value),
+    crewIds: {},
+    createdAt: Date.now()
+  });
+  nameInput.value = '';
+  linkInput.value = '';
+  colorInput.value = randomColor(name + Date.now());
+  nameInput.focus();
+});
+
+function removeJob(jobId){
+  const job = jobs[jobId];
+  const ok = confirm(`Remove job "${job ? job.name : ''}"? This also removes it from every calendar date it's scheduled on.`);
+  if(!ok) return;
+  jobsRef.child(jobId).remove();
+  // cascade: remove any schedule entries referencing this job
+  Object.entries(schedule).forEach(([dKey, entries]) => {
+    Object.entries(entries || {}).forEach(([entryId, entry]) => {
+      if(entry.jobId === jobId){
+        scheduleRef.child(dKey).child(entryId).remove();
+      }
+    });
+  });
+}
+
+function unassignCrewFromJob(jobId, crewId){
+  jobsRef.child(jobId).child('crewIds').child(crewId).remove();
+}
+
+function assignCrewToJob(jobId, crewId){
+  if(!jobs[jobId]) return;
+  jobsRef.child(jobId).child('crewIds').child(crewId).set(true);
+}
+
+function renderJobs(){
+  const list = document.getElementById('jobList');
+  const ids = Object.keys(jobs);
+  document.getElementById('jobCount').textContent = ids.length;
+  list.innerHTML = '';
+  ids.forEach(jobId => {
+    const job = jobs[jobId];
+    const assignedCrewIds = Object.keys(job.crewIds || {}).filter(cid => crews[cid]);
+
+    const card = document.createElement('div');
+    card.className = 'job-card';
+    card.style.setProperty('--job-color', job.color || '#7fc8e8');
+    card.draggable = true;
+    card.dataset.jobId = jobId;
+
+    const linkHtml = job.link
+      ? `<a class="job-link" href="${escapeHtml(job.link)}" target="_blank" rel="noopener noreferrer">🔗 Open in JobTread</a>`
+      : `<span class="no-link">No JobTread link</span>`;
+
+    card.innerHTML = `
+      <div class="job-top">
+        <div class="job-name">${escapeHtml(job.name)}</div>
+        <button type="button" class="remove" title="Remove job" aria-label="Remove job">×</button>
+      </div>
+      ${linkHtml}
+      <div class="crew-drop-zone ${assignedCrewIds.length ? '' : 'empty'}"></div>
+    `;
+
+    const dropZone = card.querySelector('.crew-drop-zone');
+    assignedCrewIds.forEach(crewId => {
+      const crew = crews[crewId];
+      const mini = document.createElement('span');
+      mini.className = 'mini-crew';
+      mini.innerHTML = `
+        <span class="swatch" style="background:${escapeHtml(crew.color)}"></span>
+        ${escapeHtml(crew.name)}
+        <button type="button" class="unassign" title="Unassign crew" aria-label="Unassign crew">×</button>
+      `;
+      mini.querySelector('.unassign').addEventListener('click', () => unassignCrewFromJob(jobId, crewId));
+      dropZone.appendChild(mini);
+    });
+
+    card.querySelector('.remove').addEventListener('click', () => removeJob(jobId));
+
+    // Dragging the job card itself -> onto the calendar
+    card.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('application/job', jobId);
+      e.dataTransfer.effectAllowed = 'copy';
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+
+    // Accepting a crew dropped onto this job card
+    card.addEventListener('dragover', e => {
+      if(e.dataTransfer.types.includes('application/crew')){
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        card.classList.add('crew-drop-hover');
+      }
+    });
+    card.addEventListener('dragleave', () => card.classList.remove('crew-drop-hover'));
+    card.addEventListener('drop', e => {
+      card.classList.remove('crew-drop-hover');
+      const crewId = e.dataTransfer.getData('application/crew');
+      if(crewId){
+        e.preventDefault();
+        assignCrewToJob(jobId, crewId);
+      }
+    });
+
+    list.appendChild(card);
+  });
+}
+
+/* ----------------------------------------------------------------
+   SCHEDULE — schedule / move / remove entries
+   ---------------------------------------------------------------- */
+function scheduleJobOnDate(jobId, dKey){
+  if(!jobs[jobId]) return;
+  const newRef = scheduleRef.child(dKey).push();
+  newRef.set({ jobId, createdAt: Date.now() });
+}
+
+function moveScheduleEntry(fromDateKey, entryId, toDateKey){
+  if(fromDateKey === toDateKey) return;
+  const entrySnapRef = scheduleRef.child(fromDateKey).child(entryId);
+  entrySnapRef.once('value').then(snap => {
+    const val = snap.val();
+    if(!val) return;
+    scheduleRef.child(toDateKey).push(val);
+    entrySnapRef.remove();
+  });
+}
+
+function removeScheduleEntry(dKey, entryId){
+  scheduleRef.child(dKey).child(entryId).remove();
+}
+
+/* ----------------------------------------------------------------
+   CALENDAR — render month grid
+   ---------------------------------------------------------------- */
+function initCalendarView(){
+  viewYear = today.getFullYear();
+  viewMonth = today.getMonth();
+}
+initCalendarView();
+
+document.getElementById('prevMonthBtn').addEventListener('click', () => {
+  viewMonth--; if(viewMonth < 0){ viewMonth = 11; viewYear--; }
+  renderCalendar();
+});
+document.getElementById('nextMonthBtn').addEventListener('click', () => {
+  viewMonth++; if(viewMonth > 11){ viewMonth = 0; viewYear++; }
+  renderCalendar();
+});
+document.getElementById('todayBtn').addEventListener('click', () => {
+  initCalendarView();
+  renderCalendar();
+});
+
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function renderCalendar(){
+  document.getElementById('monthLabel').textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
+  const grid = document.getElementById('calendarGrid');
+  grid.innerHTML = '';
+
+  const firstOfMonth = new Date(viewYear, viewMonth, 1);
+  const startWeekday = firstOfMonth.getDay(); // 0 = Sunday
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const daysInPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
+
+  const totalCells = Math.ceil((startWeekday + daysInMonth) / 7) * 7;
+
+  for(let i = 0; i < totalCells; i++){
+    const dayNum = i - startWeekday + 1;
+    let cellYear = viewYear, cellMonth = viewMonth, cellDay, otherMonth = false;
+
+    if(dayNum < 1){
+      cellMonth = viewMonth - 1; cellYear = viewMonth === 0 ? viewYear - 1 : viewYear;
+      cellDay = daysInPrevMonth + dayNum;
+      otherMonth = true;
+    } else if(dayNum > daysInMonth){
+      cellMonth = viewMonth + 1; cellYear = viewMonth === 11 ? viewYear + 1 : viewYear;
+      cellDay = dayNum - daysInMonth;
+      otherMonth = true;
+    } else {
+      cellDay = dayNum;
+    }
+
+    const kMonth = ((cellMonth % 12) + 12) % 12;
+    const kKey = dateKey(cellYear, kMonth, cellDay);
+    const isToday = !otherMonth &&
+      cellYear === today.getFullYear() && cellMonth === today.getMonth() && cellDay === today.getDate();
+
+    const cell = document.createElement('div');
+    cell.className = 'day-cell' + (otherMonth ? ' other-month' : '') + (isToday ? ' today' : '');
+    cell.dataset.dateKey = kKey;
+
+    cell.innerHTML = `
+      <div class="date-num">${cellDay}${isToday ? '<span class="today-flag">Today</span>' : ''}</div>
+      <div class="day-jobs"></div>
+    `;
+
+    const dayJobs = cell.querySelector('.day-jobs');
+    const entries = schedule[kKey] || {};
+    Object.entries(entries).forEach(([entryId, entry]) => {
+      const job = jobs[entry.jobId];
+      if(!job) return; // orphaned entry (job was deleted); ignore
+      const assignedCrewIds = Object.keys(job.crewIds || {}).filter(cid => crews[cid]);
+
+      const chip = document.createElement('div');
+      chip.className = 'sched-chip';
+      chip.style.setProperty('--sched-color', job.color || '#7fc8e8');
+      chip.draggable = true;
+      chip.dataset.entryId = entryId;
+      chip.dataset.dateKey = kKey;
+
+      const crewDots = assignedCrewIds.map(cid => {
+        const c = crews[cid];
+        return `<span class="sc-crew-dot"><i style="background:${escapeHtml(c.color)}"></i>${escapeHtml(c.name)}</span>`;
+      }).join('');
+
+      chip.innerHTML = `
+        <div class="sc-top">
+          <span class="sc-name">${escapeHtml(job.name)}</span>
+          <button type="button" class="sc-remove" title="Remove from this date" aria-label="Remove from this date">×</button>
+        </div>
+        ${crewDots ? `<div class="sc-crews">${crewDots}</div>` : ''}
+        ${job.link ? `<a class="sc-link" href="${escapeHtml(job.link)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">JobTread ↗</a>` : ''}
+      `;
+
+      chip.querySelector('.sc-remove').addEventListener('click', () => removeScheduleEntry(kKey, entryId));
+
+      chip.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('application/scheduled', JSON.stringify({ entryId, dateKey: kKey }));
+        e.dataTransfer.effectAllowed = 'move';
+        chip.classList.add('dragging');
+      });
+      chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+
+      dayJobs.appendChild(chip);
+    });
+
+    // Drop target: a job dragged from the Jobs panel, or a scheduled chip moved from another date
+    cell.addEventListener('dragover', e => {
+      if(e.dataTransfer.types.includes('application/job') || e.dataTransfer.types.includes('application/scheduled')){
+        e.preventDefault();
+        e.dataTransfer.dropEffect = e.dataTransfer.types.includes('application/scheduled') ? 'move' : 'copy';
+        cell.classList.add('drop-hover');
+      }
+    });
+    cell.addEventListener('dragleave', () => cell.classList.remove('drop-hover'));
+    cell.addEventListener('drop', e => {
+      cell.classList.remove('drop-hover');
+      const jobId = e.dataTransfer.getData('application/job');
+      const movedRaw = e.dataTransfer.getData('application/scheduled');
+      if(jobId){
+        e.preventDefault();
+        scheduleJobOnDate(jobId, kKey);
+      } else if(movedRaw){
+        e.preventDefault();
+        try{
+          const moved = JSON.parse(movedRaw);
+          moveScheduleEntry(moved.dateKey, moved.entryId, kKey);
+        }catch(err){ /* ignore malformed payload */ }
+      }
+    });
+
+    grid.appendChild(cell);
+  }
+}
+
+renderCalendar();
+</script>
+</body>
+</html>
