@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crew Schedule — Tile &amp; Stone</title>
+
+<!--
+  ============================================================================
+  SETUP CHECKLIST — read this before uploading to GitHub Pages
+  ============================================================================
+  1. Go to https://console.firebase.google.com -> your project -> Project
+     settings (gear icon) -> General -> "Your apps" -> Web app.
+     Copy the firebaseConfig object it gives you and paste it into the
+     spot marked "PASTE YOUR FIREBASE CONFIG HERE" near the bottom of
+     this file (search for that text).
+
+  2. In the Firebase console, go to Build -> Realtime Database -> Create
+     Database. Start it in "test mode" while you're building, then before
+     you actually rely on this at work, lock it down. See the "SECURITY"
+     note near the config section below for a starter rule set.
+
+  3. Save this file as index.html and push it to the root of your GitHub
+     Pages repo (or the /docs folder, depending on how your Pages source
+     is configured). No build step, no npm install — it's a single static
+     file.
+
+  4. Everything (crews, jobs, and the schedule) is stored in Firebase,
+     so anyone who opens the page sees live updates as your team makes
+     changes. Nothing is saved to this specific browser only.
+  ============================================================================
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:            #101a23;
+    --panel:         #16232f;
+    --panel-raised:  #1d2f3d;
+    --card:          #223446;
+    --line:          #2c4054;
+    --line-soft:     #24374a;
+    --ink:           #eef2f5;
+    --ink-dim:       #93a7b8;
+    --ink-faint:     #5f7386;
+    --chalk-blue:    #7fc8e8;
+    --chalk-blue-dim:#3d6a80;
+    --grout-gold:    #d9a441;
+    --danger:        #d9614a;
+    --radius:        7px;
+    --font-head: 'Oswald', 'Arial Narrow', sans-serif;
+    --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  *{ box-sizing: border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    background:
+      linear-gradient(var(--line-soft) 1px, transparent 1px) 0 0/100% 34px,
+      linear-gradient(90deg, var(--line-soft) 1px, transparent 1px) 0 0/34px 100%,
+      var(--bg);
+    background-attachment: fixed;
+    color:var(--ink);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{ background:var(--chalk-blue); color:#0c1620; }
+
+  button{ font-family:inherit; cursor:pointer; }
+  input{ font-family:inherit; }
+  a{ color:var(--chalk-blue); }
+
+  button:focus-visible, input:focus-visible, [tabindex]:focus-visible{
+    outline: 2px solid var(--chalk-blue);
+    outline-offset: 2px;
+  }
+
+  #app{ max-width:1650px; margin:0 auto; padding:20px 20px 56px; }
+
+  /* ---------- Header ---------- */
+  header.top{
+    display:flex; align-items:baseline; justify-content:space-between;
+    gap:16px; flex-wrap:wrap; margin-bottom:18px;
+    border-bottom:2px solid var(--line); padding-bottom:14px;
+  }
+  header.top .title-block .eyebrow{
+    font-family:var(--font-head); font-size:12px; letter-spacing:.22em;
+    text-transform:uppercase; color:var(--grout-gold); margin:0 0 2px;
+  }
+  header.top h1{
+    font-family:var(--font-head); font-weight:600; font-size:28px;
+    letter-spacing:.01em; margin:0; text-transform:uppercase;
+  }
+  #syncState{
+    font-size:12px; color:var(--ink-faint); display:flex; align-items:center; gap:6px;
+  }
+  #syncState .dot{
+    width:8px; height:8px; border-radius:50%; background:var(--ink-faint); display:inline-block;
+  }
+  #syncState.ok .dot{ background:#5cc98a; }
+  #syncState.err .dot{ background:var(--danger); }
+
+  /* ---------- Panels (shared look) ---------- */
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+  }
+  .panel > .panel-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 14px; border-bottom:1px solid var(--line);
+    background:var(--panel-raised); border-radius:var(--radius) var(--radius) 0 0;
+  }
+  .panel > .panel-head h2{
+    font-family:var(--font-head); font-size:14px; letter-spacing:.14em;
+    text-transform:uppercase; margin:0; color:var(--ink);
+  }
+  .panel > .panel-head .count{
+    font-size:11px; color:var(--ink-faint); font-variant-numeric:tabular-nums;
+  }
+
+  /* ---------- Crews bar (top, full width) ---------- */
+  .crews-panel{ margin-bottom:16px; }
+  .crews-body{
+    padding:14px; display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start;
+  }
+  .add-crew-form{
+    display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+    padding-right:18px; border-right:1px dashed var(--line);
+  }
+  .crew-list{
+    display:flex; gap:10px; flex-wrap:wrap; flex:1; min-height:38px; align-items:center;
+  }
+  .crew-list:empty::after{
+    content:"No crews yet — add one on the left.";
+    color:var(--ink-faint); font-size:13px; font-style:italic;
+  }
+  .crews-hint{
+    flex-basis:100%; font-size:11.5px; color:var(--ink-faint); font-style:italic; margin-top:-6px;
+  }
+
+  .chip-input{
+    background:var(--card); border:1px solid var(--line); color:var(--ink);
+    border-radius:5px; padding:8px 10px; font-size:13px; min-width:140px;
+  }
+  input[type="color"].swatch-input{
+    -webkit-appearance:none; appearance:none; width:38px; height:36px;
+    border:1px solid var(--line); border-radius:5px; padding:2px; background:var(--card); cursor:pointer;
+  }
+  input[type="color"].swatch-input::-webkit-color-swatch-wrapper{ padding:2px; }
+  input[type="color"].swatch-input::-webkit-color-swatch{ border:none; border-radius:3px; }
+
+  .btn{
+    border:1px solid var(--line); background:var(--card); color:var(--ink);
+    border-radius:5px; padding:8px 14px; font-size:13px; font-weight:600;
+    letter-spacing:.02em;
+  }
+  .btn:hover{ border-color:var(--chalk-blue); color:var(--chalk-blue); }
+  .btn.primary{ background:var(--chalk-blue); color:#0c1620; border-color:var(--chalk-blue); }
+  .btn.primary:hover{ filter:brightness(1.08); color:#0c1620; }
+
+  /* Crew chip — draggable, min touch target */
+  .crew-chip{
+    display:flex; align-items:center; gap:8px;
+    padding:8px 10px 8px 12px; border-radius:20px;
+    background:var(--card); border:1px solid var(--line);
+    font-size:13px; font-weight:600; cursor:grab; user-select:none;
+    min-height:36px;
+  }
+  .crew-chip:active{ cursor:grabbing; }
+  .crew-chip .swatch{ width:12px; height:12px; border-radius:50%; flex:none; }
+  .crew-chip .remove{
+    background:none; border:none; color:var(--ink-faint); font-size:15px; line-height:1;
+    padding:4px; margin:-4px -4px -4px 2px; border-radius:50%;
+  }
+  .crew-chip .remove:hover{ color:var(--danger); background:rgba(217,97,74,.15); }
+  .crew-chip.dragging{ opacity:.35; }
+
+  /* ---------- Layout: jobs (left) + calendar (main) ---------- */
+  .layout{ display:flex; gap:16px; align-items:flex-start; }
+
+  .jobs-panel{ width:275px; flex:none; }
+  .jobs-body{ padding:12px; display:flex; flex-direction:column; gap:10px; }
+
+  .add-job-form{
+    display:flex; flex-direction:column; gap:8px;
+    padding:12px; border:1px dashed var(--line); border-radius:6px;
+    background:var(--panel-raised);
+  }
+  .add-job-form .row{ display:flex; gap:8px; }
+  .add-job-form input.chip-input{ width:100%; min-width:0; }
+  .add-job-form .row input[type="color"]{ flex:none; }
+  .add-job-form .row input[type="text"]{ flex:1; }
+
+  .job-list{ display:flex; flex-direction:column; gap:10px; }
+  .job-list:empty::after{
+    content:"No jobs yet — create one above.";
+    color:var(--ink-faint); font-size:13px; font-style:italic; padding:4px 2px;
+  }
+
+  .job-card{
+    background:var(--card); border:1px solid var(--line); border-left:5px solid var(--job-color, var(--chalk-blue));
+    border-radius:6px; padding:10px 10px 10px 12px; cursor:grab; user-select:none;
+  }
+  .job-card:active{ cursor:grabbing; }
+  .job-card.dragging{ opacity:.35; }
+
+  .job-card .job-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:6px; }
+  .job-card .job-name{ font-weight:700; font-size:14px; line-height:1.3; }
+  .job-card .remove{
+    background:none; border:none; color:var(--ink-faint); font-size:15px; line-height:1;
+    padding:4px; border-radius:50%; flex:none;
+  }
+  .job-card .remove:hover{ color:var(--danger); background:rgba(217,97,74,.15); }
+
+  .job-card .job-link{
+    font-size:11.5px; color:var(--chalk-blue); text-decoration:none; display:inline-flex;
+    align-items:center; gap:4px; margin-top:3px;
+  }
+  .job-card .job-link:hover{ text-decoration:underline; }
+  .job-card .no-link{ font-size:11.5px; color:var(--ink-faint); margin-top:3px; display:block; }
+  .job-card .drag-hint{ font-size:10.5px; color:var(--ink-faint); margin-top:6px; font-style:italic; }
+
+  /* ---------- Calendar ---------- */
+  .calendar-wrap{ flex:1; min-width:0; }
+  .calendar-panel{ overflow:hidden; }
+  .calendar-controls{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel-raised);
+    border-radius:var(--radius) var(--radius) 0 0;
+  }
+  .calendar-controls .nav{ display:flex; gap:6px; align-items:center; }
+  .calendar-controls h2{
+    font-family:var(--font-head); font-size:18px; letter-spacing:.05em; margin:0;
+    text-transform:uppercase; min-width:190px; text-align:center;
+  }
+  .nav-btn{
+    background:var(--card); border:1px solid var(--line); color:var(--ink);
+    width:32px; height:32px; border-radius:5px; font-size:15px; display:flex;
+    align-items:center; justify-content:center;
+  }
+  .nav-btn:hover{ border-color:var(--chalk-blue); color:var(--chalk-blue); }
+
+  .weekday-row{
+    display:grid; grid-template-columns:repeat(5,1fr);
+    border-bottom:1px solid var(--line);
+  }
+  .weekday-row div{
+    padding:8px 6px; font-family:var(--font-head); font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--ink-faint); text-align:center;
+  }
+
+  .today-dropdown{ position:relative; }
+  .dropdown-menu{
+    position:absolute; top:calc(100% + 6px); left:0; z-index:20;
+    background:var(--card); border:1px solid var(--line); border-radius:6px;
+    min-width:130px; box-shadow:0 10px 24px rgba(0,0,0,.45); overflow:hidden;
+  }
+  .dropdown-menu[hidden]{ display:none; }
+  .dropdown-item{
+    display:block; width:100%; text-align:left; background:none; border:none; color:var(--ink);
+    padding:9px 12px; font-size:13px; font-weight:600;
+  }
+  .dropdown-item + .dropdown-item{ border-top:1px solid var(--line); }
+  .dropdown-item:hover{ background:var(--panel-raised); color:var(--chalk-blue); }
+  .dropdown-item.active{ color:var(--chalk-blue); }
+  .dropdown-item.active::after{ content:"✓"; float:right; }
+
+  .calendar-grid{
+    display:grid; grid-template-columns:repeat(5,1fr);
+    grid-auto-rows:minmax(112px,auto);
+  }
+  .calendar-grid.week-mode{
+    grid-auto-rows:minmax(440px,auto);
+  }
+  .day-cell{
+    border-right:1px solid var(--line); border-bottom:1px solid var(--line);
+    padding:6px; display:flex; flex-direction:column; gap:5px; min-height:112px;
+    min-width:0; /* let the grid track shrink instead of stretching to fit long text */
+    background:var(--panel);
+    transition:background .12s ease;
+    position:relative;
+  }
+  .day-cell:nth-child(5n){ border-right:none; }
+  .day-cell.other-month{ background:#0e1720; }
+  .day-cell.other-month .date-num{ color:var(--ink-faint); }
+  .day-cell.drop-hover{ background:var(--panel-raised); box-shadow:inset 0 0 0 2px var(--chalk-blue); }
+  .day-cell.today{ background:#182a37; }
+  .day-cell.today .date-num{ color:var(--chalk-blue); }
+
+  .date-num{
+    font-family:var(--font-head); font-size:13px; font-weight:600; color:var(--ink-dim);
+    display:flex; align-items:center; gap:6px;
+  }
+  .date-num .today-flag{
+    font-size:9px; letter-spacing:.1em; background:var(--chalk-blue); color:#0c1620;
+    padding:1px 5px; border-radius:8px; font-weight:700;
+  }
+
+  .day-jobs{ display:flex; flex-direction:column; gap:4px; flex:1; }
+
+  /* Instance rows — fixed height (room for job name + a crew line below
+     it) so multi-day spans line up as a ribbon and a booking with lots
+     of crews never grows taller than any other and pushes days around. */
+  .inst-row{
+    height:38px; min-height:38px; max-height:38px; border-radius:0; display:flex; align-items:center;
+    color:#0c1620; padding:0 5px; position:relative;
+    overflow:hidden; cursor:grab;
+  }
+  .inst-row:active{ cursor:grabbing; }
+  .inst-row.dragging{ opacity:.35; }
+  .inst-row.spacer{ visibility:hidden; background:none !important; cursor:default; }
+  .inst-row.cap-start{ border-top-left-radius:6px; border-bottom-left-radius:6px; padding-left:7px; }
+  .inst-row.cap-end{ border-top-right-radius:6px; border-bottom-right-radius:6px; }
+  .inst-row.crew-hover{ outline:2px solid var(--grout-gold); outline-offset:-2px; }
+  .inst-row .inst-text{
+    flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; gap:1px;
+  }
+  .inst-row .inst-name{
+    font-size:11px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .inst-row .inst-crews{
+    font-size:9.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    opacity:.82;
+  }
+  .inst-row .inst-x{
+    background:rgba(12,22,32,.2); border:none; color:#0c1620; font-size:11px; line-height:1;
+    width:16px; height:16px; min-width:16px; border-radius:50%; flex:none; margin-left:3px;
+    display:flex; align-items:center; justify-content:center; padding:0;
+  }
+  .inst-row .inst-x:hover{ background:rgba(12,22,32,.45); }
+  .inst-row .handle{
+    position:absolute; top:0; bottom:0; width:9px; cursor:ew-resize; z-index:1;
+  }
+  .inst-row .handle.left{ left:0; }
+  .inst-row .handle.right{ right:0; }
+  .inst-row .handle:hover{ background:rgba(255,255,255,.28); }
+
+  footer.hint{
+    margin-top:22px; font-size:12px; color:var(--ink-faint); line-height:1.6;
+    border-top:1px solid var(--line); padding-top:12px;
+  }
+
+  #toast{
+    position:fixed; left:50%; bottom:24px; transform:translate(-50%,12px);
+    background:#1d2f3d; border:1px solid var(--line); color:var(--ink);
+    padding:10px 16px; border-radius:6px; font-size:13px; box-shadow:0 6px 18px rgba(0,0,0,.35);
+    opacity:0; pointer-events:none; transition:opacity .18s ease, transform .18s ease; z-index:50;
+    max-width:320px; text-align:center;
+  }
+  #toast.show{ opacity:1; transform:translate(-50%,0); }
+
+  /* Floating job/crew detail popup */
+  .job-popup{
+    position:fixed; z-index:60; background:var(--card); border:1px solid var(--line);
+    border-radius:8px; box-shadow:0 14px 34px rgba(0,0,0,.5); padding:12px 14px;
+    min-width:190px; max-width:300px;
+  }
+  .job-popup[hidden]{ display:none; }
+  .job-popup-head{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    font-family:var(--font-head); font-size:15px; letter-spacing:.02em; font-weight:600;
+    color:var(--ink); margin-bottom:9px; padding-bottom:8px; border-bottom:1px solid var(--line);
+  }
+  .job-popup-close{
+    background:none; border:none; color:var(--ink-faint); font-size:17px; line-height:1;
+    padding:3px; border-radius:50%; flex:none;
+  }
+  .job-popup-close:hover{ color:var(--danger); background:rgba(217,97,74,.15); }
+  .job-popup-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:9px; }
+  .job-popup-list li{ display:flex; align-items:center; gap:9px; font-size:15px; font-weight:600; color:var(--ink); }
+  .job-popup-dot{ width:12px; height:12px; border-radius:50%; flex:none; }
+  .job-popup-empty{ font-size:13px !important; font-weight:400 !important; color:var(--ink-faint) !important; font-style:italic; }
+
+  @media (max-width: 860px){
+    .layout{ flex-direction:column; }
+    .jobs-panel{ width:100%; }
+    .add-crew-form{ border-right:none; padding-right:0; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header class="top">
+    <div class="title-block">
+      <p class="eyebrow">Tile &amp; Stone — Field Ops</p>
+      <h1>Crew Schedule</h1>
+    </div>
+    <div id="syncState"><span class="dot"></span><span id="syncText">Connecting…</span></div>
+  </header>
+
+  <!-- ===================== CREWS (top bar) ===================== -->
+  <section class="panel crews-panel" id="crewsPanel">
+    <div class="panel-head">
+      <h2>Crews</h2>
+      <span class="count" id="crewCount">0</span>
+    </div>
+    <div class="crews-body">
+      <form class="add-crew-form" id="addCrewForm">
+        <input class="chip-input" id="crewNameInput" type="text" placeholder="Crew name" maxlength="40" required>
+        <input class="swatch-input" id="crewColorInput" type="color" value="#7fc8e8" title="Crew color">
+        <button class="btn primary" type="submit">Add Crew</button>
+      </form>
+      <div class="crew-list" id="crewList"></div>
+      <p class="crews-hint">Drag a crew onto a job that's already on the calendar to assign it to that date.</p>
+    </div>
+  </section>
+
+  <div class="layout">
+
+    <!-- ===================== JOBS (left) ===================== -->
+    <section class="panel jobs-panel" id="jobsPanel">
+      <div class="panel-head">
+        <h2>Jobs</h2>
+        <span class="count" id="jobCount">0</span>
+      </div>
+      <div class="jobs-body">
+        <form class="add-job-form" id="addJobForm">
+          <input class="chip-input" id="jobNameInput" type="text" placeholder="Job name" maxlength="60" required>
+          <div class="row">
+            <input class="swatch-input" id="jobColorInput" type="color" value="#d9a441" title="Job color">
+            <input class="chip-input" id="jobLinkInput" type="text" placeholder="JobTread link (optional)">
+          </div>
+          <button class="btn primary" type="submit">Add Job</button>
+        </form>
+        <div class="job-list" id="jobList"></div>
+      </div>
+    </section>
+
+    <!-- ===================== CALENDAR (main) ===================== -->
+    <section class="calendar-wrap">
+      <div class="panel calendar-panel">
+        <div class="calendar-controls">
+          <div class="nav">
+            <button class="nav-btn" id="prevBtn" title="Previous">‹</button>
+            <div class="today-dropdown">
+              <button class="btn" id="todayBtn">Today ▾</button>
+              <div class="dropdown-menu" id="viewMenu" hidden>
+                <button type="button" class="dropdown-item" data-view="week">Week</button>
+                <button type="button" class="dropdown-item" data-view="month">Month</button>
+              </div>
+            </div>
+            <button class="nav-btn" id="nextBtn" title="Next">›</button>
+          </div>
+          <h2 id="monthLabel">Month Year</h2>
+          <div style="width:110px"></div>
+        </div>
+        <div class="weekday-row">
+          <div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div>
+        </div>
+        <div class="calendar-grid" id="calendarGrid"></div>
+      </div>
+
+      <footer class="hint">
+        Drag a <strong>job</strong> card onto a calendar date to schedule it — the job stays in
+        the Jobs box so you can schedule it again on other dates. Drag a <strong>crew</strong>
+        chip onto a job already on the calendar to assign that crew to that specific booking (a
+        different crew can be assigned if the job runs multiple dates). Drag the little handles
+        on the left/right edge of a scheduled job to stretch it across several days, or drag the
+        middle of it to move it. The calendar runs Monday through Friday only.
+      </footer>
+    </section>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<div id="jobPopup" class="job-popup" hidden>
+  <div class="job-popup-head">
+    <span id="jobPopupTitle"></span>
+    <button type="button" id="jobPopupClose" title="Close" aria-label="Close">×</button>
+  </div>
+  <ul id="jobPopupList" class="job-popup-list"></ul>
+</div>
+
+<!-- ============================================================ -->
+<!-- Firebase SDK (compat build — works with plain <script> tags) -->
+<!-- ============================================================ -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+
+<script>
+/* ================================================================
+   FIREBASE CONFIG
+   ================================================================
+   PASTE YOUR FIREBASE CONFIG HERE — replace the object below with
+   the one from Firebase console -> Project settings -> Your apps.
+   It will look like this (values are examples, use your own):
+
+   const firebaseConfig = {
+     apiKey: "AIzaSyAuzM3ABsrtRvLdFWjNWDCG-hXnZCDBS3c",
+     authDomain: "tile-and-slab-crews-schedule.firebaseapp.com",
+     databaseURL: "https://tile-and-slab-crews-schedule-default-rtdb.firebaseio.com",
+     projectId: "tile-and-slab-crews-schedule",
+     storageBucket: "tile-and-slab-crews-schedule.firebasestorage.app",
+     messagingSenderId: "666482804709",
+     appId: "1:666482804709:web:cc50bda128bcfc3f4c110c",
+     measurementId: "G-F9PY8Z3ESV"
+   };
+
+   IMPORTANT: databaseURL must be present and point at a Realtime
+   Database (not Firestore). If you created your project without a
+   Realtime Database yet, go to Build -> Realtime Database -> Create
+   Database in the Firebase console first, then copy databaseURL from
+   there.
+
+   SECURITY: this config is safe to publish (it identifies your
+   project, it isn't a secret), but your DATABASE RULES control who
+   can read/write. For a quick start while testing, in Firebase
+   console -> Realtime Database -> Rules, use:
+
+     {
+       "rules": {
+         ".read": true,
+         ".write": true
+       }
+     }
+
+   That allows anyone with the link to edit the schedule, which is
+   fine for a private crew but not once this is public. Before
+   relying on this at work, add Firebase Authentication (e.g. a
+   simple email/password sign-in for your office) and rules like:
+
+     {
+       "rules": {
+         ".read": "auth != null",
+         ".write": "auth != null"
+       }
+     }
+
+   This starter file does not include a login screen — that's the
+   next thing to add once the calendar itself is working the way
+   you want.
+*/
+const firebaseConfig = {
+  apiKey: "AIzaSyAuzM3ABsrtRvLdFWjNWDCG-hXnZCDBS3c",
+  authDomain: "tile-and-slab-crews-schedule.firebaseapp.com",
+  databaseURL: "https://tile-and-slab-crews-schedule-default-rtdb.firebaseio.com",
+  projectId: "tile-and-slab-crews-schedule",
+  storageBucket: "tile-and-slab-crews-schedule.firebasestorage.app",
+  messagingSenderId: "666482804709",
+  appId: "1:666482804709:web:cc50bda128bcfc3f4c110c",
+  measurementId: "G-F9PY8Z3ESV"
+};
+/* ================================================================ */
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+const crewsRef     = db.ref('crews');
+const jobsRef       = db.ref('jobs');
+const instancesRef   = db.ref('instances');           // scheduled bookings (job + date range + crews)
+
+const syncState = document.getElementById('syncState');
+const syncText  = document.getElementById('syncText');
+db.ref('.info/connected').on('value', snap => {
+  const connected = snap.val() === true;
+  syncState.className = connected ? 'ok' : 'err';
+  syncText.textContent = connected ? 'Synced' : 'Connecting…';
+});
+
+/* ----------------------------------------------------------------
+   Local state — mirrors Firebase, kept up to date via onValue
+   ---------------------------------------------------------------- */
+let crews = {};      // { crewId: { name, color } }
+let jobs = {};        // { jobId: { name, color, link } }
+let instances = {};    // { instanceId: { jobId, startDate, endDate, crewIds:{crewId:true} } }
+
+let viewYear, viewMonth; // calendar being displayed (0-indexed month)
+const today = new Date();
+
+// Colors cycle through this list automatically as crews/jobs are added,
+// so nobody has to remember to pick a different color each time.
+const PALETTE = ['#7fc8e8','#d9a441','#8fbf7f','#c78fd9','#e0896b','#5fb8b0','#d97fa8','#a3b85f'];
+function nextPaletteColor(existingCount){
+  return PALETTE[existingCount % PALETTE.length];
+}
+function pad2(n){ return String(n).padStart(2,'0'); }
+function dateKey(y,m,d){ return `${y}-${pad2(m+1)}-${pad2(d)}`; }
+function escapeHtml(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function normalizeUrl(url){
+  if(!url) return '';
+  url = url.trim();
+  if(!url) return '';
+  if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  return url;
+}
+
+/* -- date-key helpers (all keys are local YYYY-MM-DD strings, which
+      also sort/compare correctly as plain strings) -- */
+function keyToDate(k){
+  const [y,m,d] = k.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+function dateToKey(d){ return dateKey(d.getFullYear(), d.getMonth(), d.getDate()); }
+function addDaysToKey(k, n){
+  const d = keyToDate(k);
+  d.setDate(d.getDate() + n);
+  return dateToKey(d);
+}
+function diffDaysKeys(k1, k2){
+  return Math.round((keyToDate(k2) - keyToDate(k1)) / 86400000);
+}
+
+let toastTimer = null;
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+/* ----------------------------------------------------------------
+   Floating job/crew popup — click a scheduled job on the calendar to
+   see its full crew list. Stays open while hovered; once the mouse
+   leaves the popup it closes itself 2 seconds later.
+   ---------------------------------------------------------------- */
+const jobPopup = document.getElementById('jobPopup');
+const jobPopupTitle = document.getElementById('jobPopupTitle');
+const jobPopupList = document.getElementById('jobPopupList');
+let popupHideTimer = null;
+
+function scheduleHideJobPopup(){
+  clearTimeout(popupHideTimer);
+  popupHideTimer = setTimeout(hideJobPopup, 2000);
+}
+function hideJobPopup(){
+  clearTimeout(popupHideTimer);
+  jobPopup.hidden = true;
+}
+function showJobPopup(inst, job, anchorEl){
+  jobPopupTitle.textContent = job.name;
+  const crewIds = Object.keys(inst.crewIds || {}).filter(cid => crews[cid]);
+  jobPopupList.innerHTML = '';
+  if(crewIds.length === 0){
+    const li = document.createElement('li');
+    li.className = 'job-popup-empty';
+    li.textContent = 'No crews assigned yet';
+    jobPopupList.appendChild(li);
+  } else {
+    crewIds.forEach(cid => {
+      const crew = crews[cid];
+      const li = document.createElement('li');
+      li.innerHTML = `<span class="job-popup-dot" style="background:${escapeHtml(crew.color)}"></span>${escapeHtml(crew.name)}`;
+      jobPopupList.appendChild(li);
+    });
+  }
+
+  // Position near the clicked booking, clamped so it stays on screen.
+  jobPopup.hidden = false;
+  jobPopup.style.visibility = 'hidden';
+  const anchorRect = anchorEl.getBoundingClientRect();
+  const popupRect = jobPopup.getBoundingClientRect();
+  let top = anchorRect.bottom + 8;
+  let left = anchorRect.left;
+  if(left + popupRect.width > window.innerWidth - 10) left = window.innerWidth - popupRect.width - 10;
+  if(left < 10) left = 10;
+  if(top + popupRect.height > window.innerHeight - 10) top = anchorRect.top - popupRect.height - 8;
+  if(top < 10) top = 10;
+  jobPopup.style.left = `${left}px`;
+  jobPopup.style.top = `${top}px`;
+  jobPopup.style.visibility = 'visible';
+
+  scheduleHideJobPopup();
+}
+jobPopup.addEventListener('mouseenter', () => clearTimeout(popupHideTimer));
+jobPopup.addEventListener('mouseleave', () => scheduleHideJobPopup());
+document.getElementById('jobPopupClose').addEventListener('click', hideJobPopup);
+document.addEventListener('click', e => {
+  if(!jobPopup.hidden && !e.target.closest('.job-popup') && !e.target.closest('.inst-row')){
+    hideJobPopup();
+  }
+});
+
+/* ----------------------------------------------------------------
+   Firebase listeners
+   ---------------------------------------------------------------- */
+crewsRef.on('value', snap => { crews = snap.val() || {}; renderCrews(); renderCalendar(); });
+jobsRef.on('value', snap => { jobs = snap.val() || {}; renderJobs(); renderCalendar(); });
+instancesRef.on('value', snap => { instances = snap.val() || {}; renderCalendar(); });
+
+
+/* ----------------------------------------------------------------
+   CREWS — add / remove / render
+   ---------------------------------------------------------------- */
+document.getElementById('addCrewForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const nameInput = document.getElementById('crewNameInput');
+  const colorInput = document.getElementById('crewColorInput');
+  const name = nameInput.value.trim();
+  if(!name) return;
+  const newRef = crewsRef.push();
+  newRef.set({ name, color: colorInput.value, createdAt: Date.now() });
+  nameInput.value = '';
+  colorInput.value = nextPaletteColor(Object.keys(crews).length + 1);
+  nameInput.focus();
+});
+
+function removeCrew(crewId){
+  const crew = crews[crewId];
+  const ok = confirm(`Remove crew "${crew ? crew.name : ''}"? This unassigns it from any scheduled dates.`);
+  if(!ok) return;
+  crewsRef.child(crewId).remove();
+  // cascade: unassign from every scheduled instance
+  Object.entries(instances).forEach(([instanceId, inst]) => {
+    if(inst.crewIds && inst.crewIds[crewId]){
+      instancesRef.child(instanceId).child('crewIds').child(crewId).remove();
+    }
+  });
+}
+
+function renderCrews(){
+  const list = document.getElementById('crewList');
+  const ids = Object.keys(crews);
+  document.getElementById('crewCount').textContent = ids.length;
+  document.getElementById('crewColorInput').value = nextPaletteColor(ids.length);
+  list.innerHTML = '';
+  ids.forEach(crewId => {
+    const crew = crews[crewId];
+    const chip = document.createElement('div');
+    chip.className = 'crew-chip';
+    chip.draggable = true;
+    chip.dataset.crewId = crewId;
+    chip.innerHTML = `
+      <span class="swatch" style="background:${escapeHtml(crew.color)}"></span>
+      <span class="label">${escapeHtml(crew.name)}</span>
+      <button type="button" class="remove" title="Remove crew" aria-label="Remove crew">×</button>
+    `;
+    chip.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('application/crew', crewId);
+      e.dataTransfer.effectAllowed = 'copy';
+      chip.classList.add('dragging');
+    });
+    chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+    chip.querySelector('.remove').addEventListener('click', () => removeCrew(crewId));
+    list.appendChild(chip);
+  });
+}
+
+/* ----------------------------------------------------------------
+   JOBS — add / remove / render  (jobs no longer hold crew data —
+   crews are assigned per calendar booking instead)
+   ---------------------------------------------------------------- */
+document.getElementById('addJobForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const nameInput = document.getElementById('jobNameInput');
+  const colorInput = document.getElementById('jobColorInput');
+  const linkInput = document.getElementById('jobLinkInput');
+  const name = nameInput.value.trim();
+  if(!name) return;
+  const newRef = jobsRef.push();
+  newRef.set({
+    name,
+    color: colorInput.value,
+    link: normalizeUrl(linkInput.value),
+    createdAt: Date.now()
+  });
+  nameInput.value = '';
+  linkInput.value = '';
+  colorInput.value = nextPaletteColor(Object.keys(jobs).length + 1);
+  nameInput.focus();
+});
+
+function removeJob(jobId){
+  const job = jobs[jobId];
+  const ok = confirm(`Remove job "${job ? job.name : ''}"? This also removes every calendar booking for it.`);
+  if(!ok) return;
+  jobsRef.child(jobId).remove();
+  // cascade: remove any scheduled instances referencing this job
+  Object.entries(instances).forEach(([instanceId, inst]) => {
+    if(inst.jobId === jobId){
+      instancesRef.child(instanceId).remove();
+    }
+  });
+}
+
+function renderJobs(){
+  const list = document.getElementById('jobList');
+  const ids = Object.keys(jobs);
+  document.getElementById('jobCount').textContent = ids.length;
+  document.getElementById('jobColorInput').value = nextPaletteColor(ids.length);
+  list.innerHTML = '';
+  ids.forEach(jobId => {
+    const job = jobs[jobId];
+
+    const card = document.createElement('div');
+    card.className = 'job-card';
+    card.style.setProperty('--job-color', job.color || '#7fc8e8');
+    card.draggable = true;
+    card.dataset.jobId = jobId;
+
+    const linkHtml = job.link
+      ? `<a class="job-link" href="${escapeHtml(job.link)}" target="_blank" rel="noopener noreferrer">🔗 Open in JobTread</a>`
+      : `<span class="no-link">No JobTread link</span>`;
+
+    card.innerHTML = `
+      <div class="job-top">
+        <div class="job-name">${escapeHtml(job.name)}</div>
+        <button type="button" class="remove" title="Remove job" aria-label="Remove job">×</button>
+      </div>
+      ${linkHtml}
+      <div class="drag-hint">Drag onto a calendar date to schedule</div>
+    `;
+
+    card.querySelector('.remove').addEventListener('click', () => removeJob(jobId));
+
+    card.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('application/job', jobId);
+      e.dataTransfer.effectAllowed = 'copy';
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+
+    list.appendChild(card);
+  });
+}
+
+/* ----------------------------------------------------------------
+   SCHEDULE INSTANCES — a booking of one job onto a date range
+   ---------------------------------------------------------------- */
+function scheduleJobOnDate(jobId, dKey){
+  if(!jobs[jobId]) return;
+  const newRef = instancesRef.push();
+  newRef.set({ jobId, startDate: dKey, endDate: dKey, crewIds: {}, createdAt: Date.now() });
+}
+
+function removeInstance(instanceId){
+  instancesRef.child(instanceId).remove();
+}
+
+function assignCrewToInstance(instanceId, crewId){
+  if(!instances[instanceId] || !crews[crewId]) return;
+  instancesRef.child(instanceId).child('crewIds').child(crewId).set(true);
+}
+
+function unassignCrewFromInstance(instanceId, crewId){
+  instancesRef.child(instanceId).child('crewIds').child(crewId).remove();
+}
+
+function moveInstance(instanceId, grabbedDateKey, targetDateKey){
+  const inst = instances[instanceId];
+  if(!inst) return;
+  const offset = diffDaysKeys(inst.startDate, grabbedDateKey);
+  const newStart = addDaysToKey(targetDateKey, -offset);
+  const length = diffDaysKeys(inst.startDate, inst.endDate);
+  const newEnd = addDaysToKey(newStart, length);
+  instancesRef.child(instanceId).update({ startDate: newStart, endDate: newEnd });
+}
+
+function resizeInstance(instanceId, edge, targetDateKey){
+  const inst = instances[instanceId];
+  if(!inst) return;
+  let newStart = inst.startDate, newEnd = inst.endDate;
+  if(edge === 'start'){
+    if(targetDateKey > inst.endDate){
+      showToast("The start date can't be after the end date.");
+      return;
+    }
+    newStart = targetDateKey;
+  } else {
+    if(targetDateKey < inst.startDate){
+      showToast("The end date can't be before the start date.");
+      return;
+    }
+    newEnd = targetDateKey;
+  }
+  instancesRef.child(instanceId).update({ startDate: newStart, endDate: newEnd });
+}
+
+/* ----------------------------------------------------------------
+   WEEK LAYOUT — assigns each instance a vertical "slot" per week
+   row so multi-day bookings render as one continuous ribbon and
+   don't collide with other bookings. Longer spans are placed first
+   so they land at the top of the stack, per row.
+   ---------------------------------------------------------------- */
+function computeWeekLayout(weekDates){
+  const weekStart = weekDates[0], weekEnd = weekDates[weekDates.length - 1];
+
+  const overlapping = Object.entries(instances)
+    .filter(([, inst]) => jobs[inst.jobId] && inst.endDate >= weekStart && inst.startDate <= weekEnd)
+    .map(([id, inst]) => {
+      const clipStart = inst.startDate < weekStart ? weekStart : inst.startDate;
+      const clipEnd = inst.endDate > weekEnd ? weekEnd : inst.endDate;
+      const colStart = weekDates.indexOf(clipStart);
+      const colEnd = weekDates.indexOf(clipEnd);
+      return { id, inst, colStart, colEnd, span: colEnd - colStart + 1 };
+    });
+
+  overlapping.sort((a, b) => {
+    if(b.span !== a.span) return b.span - a.span;               // longer spans get priority (top slot)
+    if(a.inst.startDate !== b.inst.startDate) return a.inst.startDate < b.inst.startDate ? -1 : 1;
+    return (a.inst.createdAt || 0) - (b.inst.createdAt || 0);
+  });
+
+  const occupied = []; // occupied[slot] = boolean[weekDates.length]
+  function findSlot(colStart, colEnd){
+    let slot = 0;
+    while(true){
+      if(!occupied[slot]) occupied[slot] = new Array(weekDates.length).fill(false);
+      let free = true;
+      for(let c = colStart; c <= colEnd; c++){
+        if(occupied[slot][c]){ free = false; break; }
+      }
+      if(free) return slot;
+      slot++;
+    }
+  }
+
+  const placements = [];
+  overlapping.forEach(item => {
+    const slot = findSlot(item.colStart, item.colEnd);
+    for(let c = item.colStart; c <= item.colEnd; c++) occupied[slot][c] = true;
+    placements.push({ ...item, slot });
+  });
+
+  const slotCount = occupied.length;
+  const perDay = {};
+  weekDates.forEach(dk => { perDay[dk] = new Array(slotCount).fill(null); });
+  placements.forEach(p => {
+    for(let c = p.colStart; c <= p.colEnd; c++){
+      perDay[weekDates[c]][p.slot] = p;
+    }
+  });
+  return perDay;
+}
+
+/* ----------------------------------------------------------------
+   Build one instance-row DOM element for a given date + placement
+   ---------------------------------------------------------------- */
+function buildInstanceRow(placement, dKey, col){
+  const inst = placement.inst;
+  const job = jobs[inst.jobId];
+
+  const isCapStart = dKey === inst.startDate;
+  const isCapEnd = dKey === inst.endDate;
+  const isRowContinuationLabel = col === 0 && !isCapStart && inst.startDate < dKey;
+  const showLabel = isCapStart || isRowContinuationLabel;
+
+  const row = document.createElement('div');
+  row.className = 'inst-row' + (isCapStart ? ' cap-start' : '') + (isCapEnd ? ' cap-end' : '');
+  row.style.background = job.color || '#7fc8e8';
+  row.draggable = true;
+  row.dataset.instanceId = placement.id;
+
+  const crewNames = Object.keys(inst.crewIds || {}).filter(cid => crews[cid]).map(cid => crews[cid].name);
+  const crewLine = crewNames.join(', ');
+  row.title = job.name + (crewLine ? ' — ' + crewLine : '') + (job.link ? ' — ' + job.link : '');
+
+  let inner = '';
+  if(isCapStart) inner += `<span class="handle left" draggable="true" title="Drag to change the start date"></span>`;
+  if(showLabel){
+    inner += `<span class="inst-text">`;
+    inner += `<span class="inst-name">${escapeHtml(job.name)}</span>`;
+    if(crewLine) inner += `<span class="inst-crews">${escapeHtml(crewLine)}</span>`;
+    inner += `</span>`;
+  }
+  if(isCapStart) inner += `<button type="button" class="inst-x" title="Remove from calendar" aria-label="Remove from calendar">×</button>`;
+  if(isCapEnd) inner += `<span class="handle right" draggable="true" title="Drag to change the end date"></span>`;
+  row.innerHTML = inner;
+
+  // Move the whole booking (drag the body of the row)
+  row.addEventListener('dragstart', e => {
+    e.dataTransfer.setData('application/instance-move', JSON.stringify({ instanceId: placement.id, grabbedDateKey: dKey }));
+    e.dataTransfer.effectAllowed = 'move';
+    row.classList.add('dragging');
+  });
+  row.addEventListener('dragend', () => row.classList.remove('dragging'));
+
+  // Click the booking to see its full crew list in a floating popup
+  row.addEventListener('click', e => {
+    if(e.target.closest('.handle') || e.target.closest('.inst-x')) return;
+    e.stopPropagation();
+    showJobPopup(inst, job, row);
+  });
+
+  // Accept a crew dropped onto this booking
+  row.addEventListener('dragover', e => {
+    if(e.dataTransfer.types.includes('application/crew')){
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      row.classList.add('crew-hover');
+    }
+  });
+  row.addEventListener('dragleave', () => row.classList.remove('crew-hover'));
+  row.addEventListener('drop', e => {
+    row.classList.remove('crew-hover');
+    const crewId = e.dataTransfer.getData('application/crew');
+    if(crewId){
+      e.preventDefault();
+      e.stopPropagation(); // don't let the day cell underneath also handle this drop
+      assignCrewToInstance(placement.id, crewId);
+    }
+  });
+
+  const leftHandle = row.querySelector('.handle.left');
+  if(leftHandle){
+    leftHandle.addEventListener('dragstart', e => {
+      e.stopPropagation();
+      e.dataTransfer.setData('application/instance-resize', JSON.stringify({ instanceId: placement.id, edge: 'start' }));
+      e.dataTransfer.effectAllowed = 'move';
+    });
+  }
+  const rightHandle = row.querySelector('.handle.right');
+  if(rightHandle){
+    rightHandle.addEventListener('dragstart', e => {
+      e.stopPropagation();
+      e.dataTransfer.setData('application/instance-resize', JSON.stringify({ instanceId: placement.id, edge: 'end' }));
+      e.dataTransfer.effectAllowed = 'move';
+    });
+  }
+  const removeBtn = row.querySelector('.inst-x');
+  if(removeBtn){
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      removeInstance(placement.id);
+    });
+  }
+
+  return row;
+}
+
+/* ----------------------------------------------------------------
+   CALENDAR — render month grid OR single-week grid, depending on
+   viewMode. "Today" opens a dropdown to pick Week vs Month; picking
+   either one also jumps the view back to today's date/week.
+   ---------------------------------------------------------------- */
+let viewMode = 'month'; // 'month' | 'week'
+let weekStartKey;        // Monday date-key that begins the displayed week (week mode only)
+
+function startOfWeekKey(dateObj){
+  const d = new Date(dateObj);
+  const dow = d.getDay(); // 0=Sun..6=Sat
+  const diff = dow === 0 ? -6 : 1 - dow; // shift back to Monday
+  d.setDate(d.getDate() + diff);
+  return dateToKey(d);
+}
+
+function initCalendarView(){
+  viewYear = today.getFullYear();
+  viewMonth = today.getMonth();
+  weekStartKey = startOfWeekKey(today);
+}
+initCalendarView();
+
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const todayBtn = document.getElementById('todayBtn');
+const viewMenu = document.getElementById('viewMenu');
+
+prevBtn.addEventListener('click', () => {
+  if(viewMode === 'month'){
+    viewMonth--; if(viewMonth < 0){ viewMonth = 11; viewYear--; }
+  } else {
+    weekStartKey = addDaysToKey(weekStartKey, -7);
+  }
+  renderCalendar();
+});
+nextBtn.addEventListener('click', () => {
+  if(viewMode === 'month'){
+    viewMonth++; if(viewMonth > 11){ viewMonth = 0; viewYear++; }
+  } else {
+    weekStartKey = addDaysToKey(weekStartKey, 7);
+  }
+  renderCalendar();
+});
+todayBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  viewMenu.hidden = !viewMenu.hidden;
+  updateViewMenuActiveState();
+});
+viewMenu.querySelectorAll('.dropdown-item').forEach(btn => {
+  btn.addEventListener('click', () => {
+    viewMode = btn.dataset.view;
+    initCalendarView(); // jump to today in the newly chosen granularity
+    viewMenu.hidden = true;
+    renderCalendar();
+  });
+});
+document.addEventListener('click', e => {
+  if(!viewMenu.hidden && !e.target.closest('.today-dropdown')){
+    viewMenu.hidden = true;
+  }
+});
+function updateViewMenuActiveState(){
+  viewMenu.querySelectorAll('.dropdown-item').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === viewMode);
+  });
+}
+
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function updateMonthLabel(){
+  const label = document.getElementById('monthLabel');
+  if(viewMode === 'month'){
+    label.textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
+    return;
+  }
+  const startD = keyToDate(weekStartKey);
+  const endD = keyToDate(addDaysToKey(weekStartKey, 4));
+  if(startD.getFullYear() === endD.getFullYear() && startD.getMonth() === endD.getMonth()){
+    label.textContent = `${MONTH_ABBR[startD.getMonth()]} ${startD.getDate()}–${endD.getDate()}, ${startD.getFullYear()}`;
+  } else if(startD.getFullYear() === endD.getFullYear()){
+    label.textContent = `${MONTH_ABBR[startD.getMonth()]} ${startD.getDate()} – ${MONTH_ABBR[endD.getMonth()]} ${endD.getDate()}, ${startD.getFullYear()}`;
+  } else {
+    label.textContent = `${MONTH_ABBR[startD.getMonth()]} ${startD.getDate()}, ${startD.getFullYear()} – ${MONTH_ABBR[endD.getMonth()]} ${endD.getDate()}, ${endD.getFullYear()}`;
+  }
+}
+
+function renderWeekOfCells(grid, cells){
+  const weekDates = cells.map(c => c.kKey);
+  const layout = computeWeekLayout(weekDates);
+  cells.forEach((c, col) => {
+    grid.appendChild(buildDayCell(c, col, layout[c.kKey]));
+  });
+}
+
+function renderCalendar(){
+  updateMonthLabel();
+  prevBtn.title = viewMode === 'month' ? 'Previous month' : 'Previous week';
+  nextBtn.title = viewMode === 'month' ? 'Next month' : 'Next week';
+
+  const grid = document.getElementById('calendarGrid');
+  grid.innerHTML = '';
+  grid.classList.toggle('week-mode', viewMode === 'week');
+
+  if(viewMode === 'week'){
+    const cells = [];
+    for(let i = 0; i < 5; i++){
+      const kKey = addDaysToKey(weekStartKey, i);
+      const d = keyToDate(kKey);
+      cells.push({ kKey, cellDay: d.getDate(), otherMonth: false, isToday: kKey === dateToKey(today) });
+    }
+    renderWeekOfCells(grid, cells);
+    return;
+  }
+
+  // ---- month mode (weekdays only — Saturdays/Sundays are skipped entirely) ----
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+
+  const monthCells = [];
+  for(let day = 1; day <= daysInMonth; day++){
+    const d = new Date(viewYear, viewMonth, day);
+    const dow = d.getDay();
+    if(dow === 0 || dow === 6) continue; // skip weekends
+    const kKey = dateToKey(d);
+    monthCells.push({ kKey, cellDay: day, otherMonth: false, isToday: kKey === dateToKey(today) });
+  }
+
+  // Pad the front with the previous month's weekdays so the grid starts on Monday
+  const firstDow = keyToDate(monthCells[0].kKey).getDay(); // 1=Mon..5=Fri
+  const leadCount = firstDow - 1;
+  const leadCells = [];
+  let cursor = monthCells[0].kKey;
+  while(leadCells.length < leadCount){
+    cursor = addDaysToKey(cursor, -1);
+    const d = keyToDate(cursor);
+    if(d.getDay() === 0 || d.getDay() === 6) continue;
+    leadCells.unshift({ kKey: cursor, cellDay: d.getDate(), otherMonth: true, isToday: cursor === dateToKey(today) });
+  }
+
+  // Pad the back with the next month's weekdays to complete the final row of 5
+  const trailCount = (5 - ((leadCells.length + monthCells.length) % 5)) % 5;
+  const trailCells = [];
+  cursor = monthCells[monthCells.length - 1].kKey;
+  while(trailCells.length < trailCount){
+    cursor = addDaysToKey(cursor, 1);
+    const d = keyToDate(cursor);
+    if(d.getDay() === 0 || d.getDay() === 6) continue;
+    trailCells.push({ kKey: cursor, cellDay: d.getDate(), otherMonth: true, isToday: cursor === dateToKey(today) });
+  }
+
+  const cells = [...leadCells, ...monthCells, ...trailCells];
+  for(let w = 0; w < cells.length; w += 5){
+    renderWeekOfCells(grid, cells.slice(w, w + 5));
+  }
+}
+
+function buildDayCell(c, col, slots){
+  const { kKey, cellDay, otherMonth, isToday } = c;
+
+  const cell = document.createElement('div');
+  cell.className = 'day-cell'
+    + (otherMonth ? ' other-month' : '')
+    + (isToday ? ' today' : '');
+  cell.dataset.dateKey = kKey;
+
+  const dateNum = document.createElement('div');
+  dateNum.className = 'date-num';
+  dateNum.innerHTML = `${cellDay}${isToday ? '<span class="today-flag">Today</span>' : ''}`;
+  cell.appendChild(dateNum);
+
+  const dayJobs = document.createElement('div');
+  dayJobs.className = 'day-jobs';
+  (slots || []).forEach(placement => {
+    if(!placement){
+      const spacer = document.createElement('div');
+      spacer.className = 'inst-row spacer';
+      dayJobs.appendChild(spacer);
+      return;
+    }
+    dayJobs.appendChild(buildInstanceRow(placement, kKey, col));
+  });
+  cell.appendChild(dayJobs);
+
+  // Drop target: a new job from the Jobs panel, a booking being moved, or a resize handle
+  cell.addEventListener('dragover', e => {
+    const types = e.dataTransfer.types;
+    if(types.includes('application/job')){
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      cell.classList.add('drop-hover');
+    } else if(types.includes('application/instance-move') || types.includes('application/instance-resize')){
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      cell.classList.add('drop-hover');
+    }
+  });
+  cell.addEventListener('dragleave', () => {
+    cell.classList.remove('drop-hover');
+  });
+  cell.addEventListener('drop', e => {
+    cell.classList.remove('drop-hover');
+    const jobId = e.dataTransfer.getData('application/job');
+    const moveRaw = e.dataTransfer.getData('application/instance-move');
+    const resizeRaw = e.dataTransfer.getData('application/instance-resize');
+
+    if(jobId){
+      e.preventDefault();
+      scheduleJobOnDate(jobId, kKey);
+    } else if(moveRaw){
+      e.preventDefault();
+      try{
+        const { instanceId, grabbedDateKey } = JSON.parse(moveRaw);
+        moveInstance(instanceId, grabbedDateKey, kKey);
+      }catch(err){ /* ignore malformed payload */ }
+    } else if(resizeRaw){
+      e.preventDefault();
+      try{
+        const { instanceId, edge } = JSON.parse(resizeRaw);
+        resizeInstance(instanceId, edge, kKey);
+      }catch(err){ /* ignore malformed payload */ }
+    }
+  });
+
+  return cell;
+}
+
+renderCalendar();
+</script>
+</body>
+</html>
