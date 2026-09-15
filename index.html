@@ -16,18 +16,25 @@
      this file (search for that text).
 
   2. In the Firebase console, go to Build -> Realtime Database -> Create
-     Database. Start it in "test mode" while you're building, then before
-     you actually rely on this at work, lock it down. See the "SECURITY"
-     note near the config section below for a starter rule set.
+     Database if you haven't already. See the "SECURITY" note near the
+     config section below for a starter rule set.
 
   3. Save this file as index.html and push it to the root of your GitHub
      Pages repo (or the /docs folder, depending on how your Pages source
      is configured). No build step, no npm install — it's a single static
      file.
 
-  4. Everything (crews, jobs, and the schedule) is stored in Firebase,
-     so anyone who opens the page sees live updates as your team makes
-     changes. Nothing is saved to this specific browser only.
+  4. DATA SHAPE: this version stores crews/jobs/bookings separately per
+     calendar tab, under:
+       crews/stone, crews/tile, crews/shop
+       jobs/stone,  jobs/tile,  jobs/shop
+       instances/stone, instances/tile, instances/shop
+     The "All" tab isn't a real calendar — it just reads and displays all
+     three at once. The first time this page loads against a database that
+     still has the OLD flat structure (crews/{id}, jobs/{id}, instances/{id}
+     with no stone/tile/shop underneath), it automatically moves that old
+     data onto the Tile calendar and keeps a timestamped backup copy under
+     "legacyBackup" in case you ever need to look back at it.
   ============================================================================
 -->
 
@@ -122,6 +129,12 @@
   .panel > .panel-head .count{
     font-size:11px; color:var(--ink-faint); font-variant-numeric:tabular-nums;
   }
+  .panel-cal-badge{
+    font-family:var(--font-body); font-size:10px; font-weight:700; text-transform:uppercase;
+    letter-spacing:.06em; color:var(--chalk-blue); background:var(--panel);
+    border:1px solid var(--line); padding:2px 7px; border-radius:9px; margin-left:8px;
+    vertical-align:middle;
+  }
 
   /* ---------- Crews bar (top, full width) ---------- */
   .crews-panel{ margin-bottom:16px; }
@@ -180,6 +193,11 @@
   .crew-chip .remove:hover{ color:var(--danger); background:rgba(217,97,74,.15); }
   .crew-chip.dragging{ opacity:.35; }
 
+  .src-tag{
+    font-size:9px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint);
+    background:var(--panel); border:1px solid var(--line); padding:1px 5px; border-radius:8px; margin-left:2px;
+  }
+
   /* ---------- Layout: jobs (left) + calendar (main) ---------- */
   .layout{ display:flex; gap:16px; align-items:flex-start; }
 
@@ -229,10 +247,11 @@
   .calendar-wrap{ flex:1; min-width:0; }
   .calendar-panel{ overflow:hidden; }
   .calendar-controls{
-    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
     padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel-raised);
     border-radius:var(--radius) var(--radius) 0 0;
   }
+  .controls-left{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
   .calendar-controls .nav{ display:flex; gap:6px; align-items:center; }
   .calendar-controls h2{
     font-family:var(--font-head); font-size:18px; letter-spacing:.05em; margin:0;
@@ -245,14 +264,14 @@
   }
   .nav-btn:hover{ border-color:var(--chalk-blue); color:var(--chalk-blue); }
 
-  .weekday-row{
-    display:grid; grid-template-columns:repeat(5,1fr);
-    border-bottom:1px solid var(--line);
+  .cal-tabs{ display:flex; gap:4px; }
+  .cal-tab{
+    background:var(--card); border:1px solid var(--line); color:var(--ink-dim);
+    border-radius:5px; padding:7px 13px; font-size:12px; font-weight:700; letter-spacing:.04em;
+    text-transform:uppercase;
   }
-  .weekday-row div{
-    padding:8px 6px; font-family:var(--font-head); font-size:11px; letter-spacing:.12em;
-    text-transform:uppercase; color:var(--ink-faint); text-align:center;
-  }
+  .cal-tab:hover{ border-color:var(--chalk-blue); color:var(--chalk-blue); }
+  .cal-tab.active{ background:var(--chalk-blue); color:#0c1620; border-color:var(--chalk-blue); }
 
   .today-dropdown{ position:relative; }
   .dropdown-menu{
@@ -269,6 +288,15 @@
   .dropdown-item:hover{ background:var(--panel-raised); color:var(--chalk-blue); }
   .dropdown-item.active{ color:var(--chalk-blue); }
   .dropdown-item.active::after{ content:"✓"; float:right; }
+
+  .weekday-row{
+    display:grid; grid-template-columns:repeat(5,1fr);
+    border-bottom:1px solid var(--line);
+  }
+  .weekday-row div{
+    padding:8px 6px; font-family:var(--font-head); font-size:11px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--ink-faint); text-align:center;
+  }
 
   .calendar-grid{
     display:grid; grid-template-columns:repeat(5,1fr);
@@ -382,6 +410,24 @@
   .job-popup-remove:hover{ color:var(--danger); background:rgba(217,97,74,.15); }
   .job-popup-empty{ font-size:13px !important; font-weight:400 !important; color:var(--ink-faint) !important; font-style:italic; }
 
+  /* "Which calendar?" picker modal (used from the All tab) */
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(8,13,18,.72); z-index:100;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  .modal-overlay[hidden]{ display:none; }
+  .modal-box{
+    background:var(--panel-raised); border:1px solid var(--line); border-radius:10px;
+    padding:22px; max-width:340px; width:100%; box-shadow:0 20px 50px rgba(0,0,0,.5);
+  }
+  .modal-box h3{
+    font-family:var(--font-head); font-size:16px; text-transform:uppercase; letter-spacing:.04em;
+    margin:0 0 14px; color:var(--ink); text-align:center;
+  }
+  .modal-btn-row{ display:flex; gap:8px; margin-bottom:10px; }
+  .modal-btn-row .btn{ flex:1; padding:12px 6px; font-size:13px; }
+  .modal-cancel{ width:100%; }
+
   @media (max-width: 860px){
     .layout{ flex-direction:column; }
     .jobs-panel{ width:100%; }
@@ -403,7 +449,7 @@
   <!-- ===================== CREWS (top bar) ===================== -->
   <section class="panel crews-panel" id="crewsPanel">
     <div class="panel-head">
-      <h2>Crews</h2>
+      <h2>Crews<span class="panel-cal-badge" id="crewsCalBadge">Tile</span></h2>
       <span class="count" id="crewCount">0</span>
     </div>
     <div class="crews-body">
@@ -422,7 +468,7 @@
     <!-- ===================== JOBS (left) ===================== -->
     <section class="panel jobs-panel" id="jobsPanel">
       <div class="panel-head">
-        <h2>Jobs</h2>
+        <h2>Jobs<span class="panel-cal-badge" id="jobsCalBadge">Tile</span></h2>
         <span class="count" id="jobCount">0</span>
       </div>
       <div class="jobs-body">
@@ -442,16 +488,24 @@
     <section class="calendar-wrap">
       <div class="panel calendar-panel">
         <div class="calendar-controls">
-          <div class="nav">
-            <button class="nav-btn" id="prevBtn" title="Previous">‹</button>
-            <div class="today-dropdown">
-              <button class="btn" id="todayBtn">Today ▾</button>
-              <div class="dropdown-menu" id="viewMenu" hidden>
-                <button type="button" class="dropdown-item" data-view="week">Week</button>
-                <button type="button" class="dropdown-item" data-view="month">Month</button>
+          <div class="controls-left">
+            <div class="nav">
+              <button class="nav-btn" id="prevBtn" title="Previous">‹</button>
+              <div class="today-dropdown">
+                <button class="btn" id="todayBtn">Today ▾</button>
+                <div class="dropdown-menu" id="viewMenu" hidden>
+                  <button type="button" class="dropdown-item" data-view="week">Week</button>
+                  <button type="button" class="dropdown-item" data-view="month">Month</button>
+                </div>
               </div>
+              <button class="nav-btn" id="nextBtn" title="Next">›</button>
             </div>
-            <button class="nav-btn" id="nextBtn" title="Next">›</button>
+            <div class="cal-tabs" id="calTabs">
+              <button type="button" class="cal-tab" data-cal="stone">Stone</button>
+              <button type="button" class="cal-tab active" data-cal="tile">Tile</button>
+              <button type="button" class="cal-tab" data-cal="shop">Shop</button>
+              <button type="button" class="cal-tab" data-cal="all">All</button>
+            </div>
           </div>
           <h2 id="monthLabel">Month Year</h2>
           <div style="width:110px"></div>
@@ -468,7 +522,11 @@
         chip onto a job already on the calendar to assign that crew to that specific booking (a
         different crew can be assigned if the job runs multiple dates). Drag the little handles
         on the left/right edge of a scheduled job to stretch it across several days, or drag the
-        middle of it to move it. The calendar runs Monday through Friday only.
+        middle of it to move it. Click a scheduled job to see its full crew list. The calendar
+        runs Monday through Friday only. Use the <strong>Stone / Tile / Shop / All</strong> tabs
+        above to switch calendars — Stone, Tile, and Shop each keep their own separate crews,
+        jobs, and schedule; All just shows everything from the three of them at once and can't
+        hold jobs of its own — adding something while on All will ask which calendar it belongs to.
       </footer>
     </section>
   </div>
@@ -482,6 +540,18 @@
     <button type="button" id="jobPopupClose" title="Close" aria-label="Close">×</button>
   </div>
   <ul id="jobPopupList" class="job-popup-list"></ul>
+</div>
+
+<div id="calPickerOverlay" class="modal-overlay" hidden>
+  <div class="modal-box">
+    <h3 id="calPickerTitle">Which calendar?</h3>
+    <div class="modal-btn-row">
+      <button type="button" class="btn" data-cal="stone">Stone</button>
+      <button type="button" class="btn" data-cal="tile">Tile</button>
+      <button type="button" class="btn" data-cal="shop">Shop</button>
+    </div>
+    <button type="button" class="btn modal-cancel" id="calPickerCancel">Cancel</button>
+  </div>
 </div>
 
 <!-- ============================================================ -->
@@ -509,11 +579,9 @@
      measurementId: "G-F9PY8Z3ESV"
    };
 
+
    IMPORTANT: databaseURL must be present and point at a Realtime
-   Database (not Firestore). If you created your project without a
-   Realtime Database yet, go to Build -> Realtime Database -> Create
-   Database in the Firebase console first, then copy databaseURL from
-   there.
+   Database (not Firestore).
 
    SECURITY: this config is safe to publish (it identifies your
    project, it isn't a secret), but your DATABASE RULES control who
@@ -527,10 +595,8 @@
        }
      }
 
-   That allows anyone with the link to edit the schedule, which is
-   fine for a private crew but not once this is public. Before
-   relying on this at work, add Firebase Authentication (e.g. a
-   simple email/password sign-in for your office) and rules like:
+   Before relying on this at work, add Firebase Authentication and
+   rules like:
 
      {
        "rules": {
@@ -538,10 +604,6 @@
          ".write": "auth != null"
        }
      }
-
-   This starter file does not include a login screen — that's the
-   next thing to add once the calendar itself is working the way
-   you want.
 */
 const firebaseConfig = {
      apiKey: "AIzaSyAuzM3ABsrtRvLdFWjNWDCG-hXnZCDBS3c",
@@ -558,9 +620,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-const crewsRef     = db.ref('crews');
-const jobsRef       = db.ref('jobs');
-const instancesRef   = db.ref('instances');           // scheduled bookings (job + date range + crews)
+const CALENDARS = ['stone', 'tile', 'shop'];
 
 const syncState = document.getElementById('syncState');
 const syncText  = document.getElementById('syncText');
@@ -571,11 +631,23 @@ db.ref('.info/connected').on('value', snap => {
 });
 
 /* ----------------------------------------------------------------
-   Local state — mirrors Firebase, kept up to date via onValue
+   Local state
    ---------------------------------------------------------------- */
-let crews = {};      // { crewId: { name, color } }
-let jobs = {};        // { jobId: { name, color, link } }
-let instances = {};    // { instanceId: { jobId, startDate, endDate, crewIds:{crewId:true} } }
+// Raw per-calendar data straight from Firebase.
+let dataByCalendar = {
+  stone: { crews: {}, jobs: {}, instances: {} },
+  tile:  { crews: {}, jobs: {}, instances: {} },
+  shop:  { crews: {}, jobs: {}, instances: {} },
+};
+
+// "Visible" merged view for whatever tab is currently selected — recomputed
+// by recomputeVisibleData() before every render. Each entry carries its
+// real _cal + _id so actions know exactly where to write in Firebase.
+let crews = {};
+let jobs = {};
+let instances = {};
+
+let currentCalendar = 'tile'; // 'stone' | 'tile' | 'shop' | 'all'
 
 let viewYear, viewMonth; // calendar being displayed (0-indexed month)
 const today = new Date();
@@ -598,6 +670,8 @@ function normalizeUrl(url){
   if(!/^https?:\/\//i.test(url)) url = 'https://' + url;
   return url;
 }
+function capitalize(s){ return s.charAt(0).toUpperCase() + s.slice(1); }
+function calAbbr(cal){ return { stone:'STN', tile:'TLE', shop:'SHP' }[cal] || String(cal).toUpperCase(); }
 
 /* -- date-key helpers (all keys are local YYYY-MM-DD strings, which
       also sort/compare correctly as plain strings) -- */
@@ -625,6 +699,33 @@ function showToast(msg){
 }
 
 /* ----------------------------------------------------------------
+   "Which calendar?" picker modal — used when adding a crew/job while
+   viewing the All tab, since All can't own data of its own.
+   ---------------------------------------------------------------- */
+const calPickerOverlay = document.getElementById('calPickerOverlay');
+const calPickerTitle = document.getElementById('calPickerTitle');
+let calPickerCallback = null;
+
+function openCalendarPicker(title, onPick){
+  calPickerTitle.textContent = title;
+  calPickerCallback = onPick;
+  calPickerOverlay.hidden = false;
+}
+function closeCalendarPicker(){
+  calPickerOverlay.hidden = true;
+  calPickerCallback = null;
+}
+calPickerOverlay.querySelectorAll('.modal-btn-row [data-cal]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const cal = btn.dataset.cal;
+    const cb = calPickerCallback;
+    closeCalendarPicker();
+    if(cb) cb(cal);
+  });
+});
+document.getElementById('calPickerCancel').addEventListener('click', closeCalendarPicker);
+
+/* ----------------------------------------------------------------
    Floating job/crew popup — click a scheduled job on the calendar to
    see its full crew list. Stays open while hovered; once the mouse
    leaves the popup it closes itself 2 seconds later.
@@ -642,12 +743,10 @@ function hideJobPopup(){
   clearTimeout(popupHideTimer);
   jobPopup.hidden = true;
 }
-let currentPopupInstanceId = null;
-
-function renderPopupCrewList(instanceId){
-  const inst = instances[instanceId];
+function renderPopupCrewList(cal, instanceId){
+  const inst = dataByCalendar[cal] && dataByCalendar[cal].instances[instanceId];
   jobPopupList.innerHTML = '';
-  const crewIds = inst ? Object.keys(inst.crewIds || {}).filter(cid => crews[cid]) : [];
+  const crewIds = inst ? Object.keys(inst.crewIds || {}).filter(cid => dataByCalendar[cal].crews[cid]) : [];
   if(crewIds.length === 0){
     const li = document.createElement('li');
     li.className = 'job-popup-empty';
@@ -656,7 +755,7 @@ function renderPopupCrewList(instanceId){
     return;
   }
   crewIds.forEach(cid => {
-    const crew = crews[cid];
+    const crew = dataByCalendar[cal].crews[cid];
     const li = document.createElement('li');
     li.innerHTML = `
       <span class="job-popup-dot" style="background:${escapeHtml(crew.color)}"></span>
@@ -665,22 +764,19 @@ function renderPopupCrewList(instanceId){
     `;
     li.querySelector('.job-popup-remove').addEventListener('click', e => {
       e.stopPropagation();
-      unassignCrewFromInstance(instanceId, cid);
-      if(instances[instanceId] && instances[instanceId].crewIds){
-        delete instances[instanceId].crewIds[cid]; // optimistic — updates the popup instantly
+      unassignCrewFromInstance(cal, instanceId, cid);
+      if(dataByCalendar[cal].instances[instanceId] && dataByCalendar[cal].instances[instanceId].crewIds){
+        delete dataByCalendar[cal].instances[instanceId].crewIds[cid]; // optimistic — updates the popup instantly
       }
-      renderPopupCrewList(instanceId);
+      renderPopupCrewList(cal, instanceId);
     });
     jobPopupList.appendChild(li);
   });
 }
+function showJobPopup(cal, instanceId, job, anchorEl){
+  jobPopupTitle.textContent = job.name + (currentCalendar === 'all' ? ` — ${capitalize(cal)}` : '');
+  renderPopupCrewList(cal, instanceId);
 
-function showJobPopup(instanceId, job, anchorEl){
-  currentPopupInstanceId = instanceId;
-  jobPopupTitle.textContent = job.name;
-  renderPopupCrewList(instanceId);
-
-  // Position near the clicked booking, clamped so it stays on screen.
   jobPopup.hidden = false;
   jobPopup.style.visibility = 'hidden';
   const anchorRect = anchorEl.getBoundingClientRect();
@@ -695,7 +791,6 @@ function showJobPopup(instanceId, job, anchorEl){
   jobPopup.style.top = `${top}px`;
   jobPopup.style.visibility = 'visible';
 
-
   scheduleHideJobPopup();
 }
 jobPopup.addEventListener('mouseenter', () => clearTimeout(popupHideTimer));
@@ -708,12 +803,111 @@ document.addEventListener('click', e => {
 });
 
 /* ----------------------------------------------------------------
-   Firebase listeners
+   Recompute the "visible" crews/jobs/instances for whichever tab is
+   selected. On a single calendar tab this is just that calendar's
+   data tagged with _cal/_id. On the All tab it's all three merged
+   together under composite keys so nothing collides.
    ---------------------------------------------------------------- */
-crewsRef.on('value', snap => { crews = snap.val() || {}; renderCrews(); renderCalendar(); });
-jobsRef.on('value', snap => { jobs = snap.val() || {}; renderJobs(); renderCalendar(); });
-instancesRef.on('value', snap => { instances = snap.val() || {}; renderCalendar(); });
+function recomputeVisibleData(){
+  crews = {}; jobs = {}; instances = {};
+  const cals = currentCalendar === 'all' ? CALENDARS : [currentCalendar];
+  cals.forEach(cal => {
+    const bucket = dataByCalendar[cal] || { crews:{}, jobs:{}, instances:{} };
+    Object.entries(bucket.crews || {}).forEach(([id, c]) => {
+      crews[`${cal}__${id}`] = { ...c, _cal: cal, _id: id };
+    });
+    Object.entries(bucket.jobs || {}).forEach(([id, j]) => {
+      jobs[`${cal}__${id}`] = { ...j, _cal: cal, _id: id };
+    });
+    Object.entries(bucket.instances || {}).forEach(([id, inst]) => {
+      instances[`${cal}__${id}`] = { ...inst, _cal: cal, _id: id };
+    });
+  });
+}
+function jobFor(inst){
+  return jobs[`${inst._cal}__${inst.jobId}`];
+}
 
+function renderAll(){
+  recomputeVisibleData();
+  renderCrews();
+  renderJobs();
+  renderCalendar();
+}
+
+/* ----------------------------------------------------------------
+   One-time migration: if this database still has the old flat
+   crews/{id}, jobs/{id}, instances/{id} shape from before calendars
+   existed, move all of it onto the Tile calendar and keep a backup.
+   ---------------------------------------------------------------- */
+async function migrateLegacyDataIfNeeded(){
+  const [crewsSnap, jobsSnap, instancesSnap] = await Promise.all([
+    db.ref('crews').once('value'),
+    db.ref('jobs').once('value'),
+    db.ref('instances').once('value'),
+  ]);
+  const crewsVal = crewsSnap.val();
+  const jobsVal = jobsSnap.val();
+  const instancesVal = instancesSnap.val();
+
+  const isLegacy = (val) => !!val && !CALENDARS.some(cal => cal in val);
+  const crewsIsLegacy = isLegacy(crewsVal);
+  const jobsIsLegacy = isLegacy(jobsVal);
+  const instancesIsLegacy = isLegacy(instancesVal);
+
+  if(!crewsIsLegacy && !jobsIsLegacy && !instancesIsLegacy) return;
+
+  const stamp = Date.now();
+  const writes = {};
+  if(crewsIsLegacy){
+    writes['crews/tile'] = crewsVal;
+    writes[`legacyBackup/${stamp}/crews`] = crewsVal;
+  }
+  if(jobsIsLegacy){
+    writes['jobs/tile'] = jobsVal;
+    writes[`legacyBackup/${stamp}/jobs`] = jobsVal;
+  }
+  if(instancesIsLegacy){
+    writes['instances/tile'] = instancesVal;
+    writes[`legacyBackup/${stamp}/instances`] = instancesVal;
+  }
+  await db.ref().update(writes);
+
+  const cleanup = {};
+  if(crewsIsLegacy) Object.keys(crewsVal).forEach(id => { cleanup[`crews/${id}`] = null; });
+  if(jobsIsLegacy) Object.keys(jobsVal).forEach(id => { cleanup[`jobs/${id}`] = null; });
+  if(instancesIsLegacy) Object.keys(instancesVal).forEach(id => { cleanup[`instances/${id}`] = null; });
+  if(Object.keys(cleanup).length) await db.ref().update(cleanup);
+}
+
+function attachCalendarListeners(){
+  CALENDARS.forEach(cal => {
+    db.ref(`crews/${cal}`).on('value', snap => { dataByCalendar[cal].crews = snap.val() || {}; renderAll(); });
+    db.ref(`jobs/${cal}`).on('value', snap => { dataByCalendar[cal].jobs = snap.val() || {}; renderAll(); });
+    db.ref(`instances/${cal}`).on('value', snap => { dataByCalendar[cal].instances = snap.val() || {}; renderAll(); });
+  });
+}
+
+/* ----------------------------------------------------------------
+   Calendar tabs
+   ---------------------------------------------------------------- */
+const calTabs = document.getElementById('calTabs');
+function updatePanelBadges(){
+  const label = currentCalendar === 'all' ? 'All' : capitalize(currentCalendar);
+  document.getElementById('crewsCalBadge').textContent = label;
+  document.getElementById('jobsCalBadge').textContent = label;
+}
+calTabs.querySelectorAll('.cal-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if(btn.dataset.cal === currentCalendar) return;
+    currentCalendar = btn.dataset.cal;
+    calTabs.querySelectorAll('.cal-tab').forEach(b => b.classList.toggle('active', b === btn));
+    updatePanelBadges();
+    hideJobPopup();
+    renderAll();
+  });
+});
+updatePanelBadges();
 
 /* ----------------------------------------------------------------
    CREWS — add / remove / render
@@ -724,22 +918,26 @@ document.getElementById('addCrewForm').addEventListener('submit', e => {
   const colorInput = document.getElementById('crewColorInput');
   const name = nameInput.value.trim();
   if(!name) return;
-  const newRef = crewsRef.push();
-  newRef.set({ name, color: colorInput.value, createdAt: Date.now() });
+  const payload = { name, color: colorInput.value, createdAt: Date.now() };
+  const create = (cal) => { db.ref(`crews/${cal}`).push().set(payload); };
+  if(currentCalendar === 'all'){
+    openCalendarPicker('Add this crew to which calendar?', create);
+  } else {
+    create(currentCalendar);
+  }
   nameInput.value = '';
   colorInput.value = nextPaletteColor(Object.keys(crews).length + 1);
   nameInput.focus();
 });
 
-function removeCrew(crewId){
-  const crew = crews[crewId];
+function removeCrew(cal, id){
+  const crew = dataByCalendar[cal].crews[id];
   const ok = confirm(`Remove crew "${crew ? crew.name : ''}"? This unassigns it from any scheduled dates.`);
   if(!ok) return;
-  crewsRef.child(crewId).remove();
-  // cascade: unassign from every scheduled instance
-  Object.entries(instances).forEach(([instanceId, inst]) => {
-    if(inst.crewIds && inst.crewIds[crewId]){
-      instancesRef.child(instanceId).child('crewIds').child(crewId).remove();
+  db.ref(`crews/${cal}/${id}`).remove();
+  Object.entries(dataByCalendar[cal].instances || {}).forEach(([instanceId, inst]) => {
+    if(inst.crewIds && inst.crewIds[id]){
+      db.ref(`instances/${cal}/${instanceId}/crewIds/${id}`).remove();
     }
   });
 }
@@ -750,31 +948,30 @@ function renderCrews(){
   document.getElementById('crewCount').textContent = ids.length;
   document.getElementById('crewColorInput').value = nextPaletteColor(ids.length);
   list.innerHTML = '';
-  ids.forEach(crewId => {
-    const crew = crews[crewId];
+  ids.forEach(key => {
+    const crew = crews[key];
     const chip = document.createElement('div');
     chip.className = 'crew-chip';
     chip.draggable = true;
-    chip.dataset.crewId = crewId;
     chip.innerHTML = `
       <span class="swatch" style="background:${escapeHtml(crew.color)}"></span>
       <span class="label">${escapeHtml(crew.name)}</span>
+      ${currentCalendar === 'all' ? `<span class="src-tag">${escapeHtml(capitalize(crew._cal))}</span>` : ''}
       <button type="button" class="remove" title="Remove crew" aria-label="Remove crew">×</button>
     `;
     chip.addEventListener('dragstart', e => {
-      e.dataTransfer.setData('application/crew', crewId);
+      e.dataTransfer.setData('application/crew', JSON.stringify({ cal: crew._cal, id: crew._id }));
       e.dataTransfer.effectAllowed = 'copy';
       chip.classList.add('dragging');
     });
     chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
-    chip.querySelector('.remove').addEventListener('click', () => removeCrew(crewId));
+    chip.querySelector('.remove').addEventListener('click', () => removeCrew(crew._cal, crew._id));
     list.appendChild(chip);
   });
 }
 
 /* ----------------------------------------------------------------
-   JOBS — add / remove / render  (jobs no longer hold crew data —
-   crews are assigned per calendar booking instead)
+   JOBS — add / remove / render
    ---------------------------------------------------------------- */
 document.getElementById('addJobForm').addEventListener('submit', e => {
   e.preventDefault();
@@ -783,29 +980,31 @@ document.getElementById('addJobForm').addEventListener('submit', e => {
   const linkInput = document.getElementById('jobLinkInput');
   const name = nameInput.value.trim();
   if(!name) return;
-  const newRef = jobsRef.push();
-  newRef.set({
+  const payload = {
     name,
     color: colorInput.value,
     link: normalizeUrl(linkInput.value),
     createdAt: Date.now()
-  });
+  };
+  const create = (cal) => { db.ref(`jobs/${cal}`).push().set(payload); };
+  if(currentCalendar === 'all'){
+    openCalendarPicker('Add this job to which calendar?', create);
+  } else {
+    create(currentCalendar);
+  }
   nameInput.value = '';
   linkInput.value = '';
   colorInput.value = nextPaletteColor(Object.keys(jobs).length + 1);
   nameInput.focus();
 });
 
-function removeJob(jobId){
-  const job = jobs[jobId];
+function removeJob(cal, id){
+  const job = dataByCalendar[cal].jobs[id];
   const ok = confirm(`Remove job "${job ? job.name : ''}"? This also removes every calendar booking for it.`);
   if(!ok) return;
-  jobsRef.child(jobId).remove();
-  // cascade: remove any scheduled instances referencing this job
-  Object.entries(instances).forEach(([instanceId, inst]) => {
-    if(inst.jobId === jobId){
-      instancesRef.child(instanceId).remove();
-    }
+  db.ref(`jobs/${cal}/${id}`).remove();
+  Object.entries(dataByCalendar[cal].instances || {}).forEach(([instanceId, inst]) => {
+    if(inst.jobId === id) db.ref(`instances/${cal}/${instanceId}`).remove();
   });
 }
 
@@ -815,14 +1014,13 @@ function renderJobs(){
   document.getElementById('jobCount').textContent = ids.length;
   document.getElementById('jobColorInput').value = nextPaletteColor(ids.length);
   list.innerHTML = '';
-  ids.forEach(jobId => {
-    const job = jobs[jobId];
+  ids.forEach(key => {
+    const job = jobs[key];
 
     const card = document.createElement('div');
     card.className = 'job-card';
     card.style.setProperty('--job-color', job.color || '#7fc8e8');
     card.draggable = true;
-    card.dataset.jobId = jobId;
 
     const linkHtml = job.link
       ? `<a class="job-link" href="${escapeHtml(job.link)}" target="_blank" rel="noopener noreferrer">🔗 Open in JobTread</a>`
@@ -830,17 +1028,17 @@ function renderJobs(){
 
     card.innerHTML = `
       <div class="job-top">
-        <div class="job-name">${escapeHtml(job.name)}</div>
+        <div class="job-name">${escapeHtml(job.name)}${currentCalendar === 'all' ? `<span class="src-tag">${escapeHtml(capitalize(job._cal))}</span>` : ''}</div>
         <button type="button" class="remove" title="Remove job" aria-label="Remove job">×</button>
       </div>
       ${linkHtml}
       <div class="drag-hint">Drag onto a calendar date to schedule</div>
     `;
 
-    card.querySelector('.remove').addEventListener('click', () => removeJob(jobId));
+    card.querySelector('.remove').addEventListener('click', () => removeJob(job._cal, job._id));
 
     card.addEventListener('dragstart', e => {
-      e.dataTransfer.setData('application/job', jobId);
+      e.dataTransfer.setData('application/job', JSON.stringify({ cal: job._cal, id: job._id }));
       e.dataTransfer.effectAllowed = 'copy';
       card.classList.add('dragging');
     });
@@ -853,37 +1051,40 @@ function renderJobs(){
 /* ----------------------------------------------------------------
    SCHEDULE INSTANCES — a booking of one job onto a date range
    ---------------------------------------------------------------- */
-function scheduleJobOnDate(jobId, dKey){
-  if(!jobs[jobId]) return;
-  const newRef = instancesRef.push();
-  newRef.set({ jobId, startDate: dKey, endDate: dKey, crewIds: {}, createdAt: Date.now() });
+function scheduleJobOnDate(cal, jobId, dKey){
+  if(!dataByCalendar[cal] || !dataByCalendar[cal].jobs[jobId]) return;
+  db.ref(`instances/${cal}`).push().set({ jobId, startDate: dKey, endDate: dKey, crewIds: {}, createdAt: Date.now() });
 }
 
-function removeInstance(instanceId){
-  instancesRef.child(instanceId).remove();
+function removeInstance(cal, id){
+  db.ref(`instances/${cal}/${id}`).remove();
 }
 
-function assignCrewToInstance(instanceId, crewId){
-  if(!instances[instanceId] || !crews[crewId]) return;
-  instancesRef.child(instanceId).child('crewIds').child(crewId).set(true);
+function assignCrewToInstance(instCal, instId, crewCal, crewId){
+  if(instCal !== crewCal){
+    showToast("Can't assign that crew — it belongs to a different calendar.");
+    return;
+  }
+  if(!dataByCalendar[instCal].instances[instId] || !dataByCalendar[crewCal].crews[crewId]) return;
+  db.ref(`instances/${instCal}/${instId}/crewIds/${crewId}`).set(true);
 }
 
-function unassignCrewFromInstance(instanceId, crewId){
-  instancesRef.child(instanceId).child('crewIds').child(crewId).remove();
+function unassignCrewFromInstance(cal, instId, crewId){
+  db.ref(`instances/${cal}/${instId}/crewIds/${crewId}`).remove();
 }
 
-function moveInstance(instanceId, grabbedDateKey, targetDateKey){
-  const inst = instances[instanceId];
+function moveInstance(cal, id, grabbedDateKey, targetDateKey){
+  const inst = dataByCalendar[cal].instances[id];
   if(!inst) return;
   const offset = diffDaysKeys(inst.startDate, grabbedDateKey);
   const newStart = addDaysToKey(targetDateKey, -offset);
   const length = diffDaysKeys(inst.startDate, inst.endDate);
   const newEnd = addDaysToKey(newStart, length);
-  instancesRef.child(instanceId).update({ startDate: newStart, endDate: newEnd });
+  db.ref(`instances/${cal}/${id}`).update({ startDate: newStart, endDate: newEnd });
 }
 
-function resizeInstance(instanceId, edge, targetDateKey){
-  const inst = instances[instanceId];
+function resizeInstance(cal, id, edge, targetDateKey){
+  const inst = dataByCalendar[cal].instances[id];
   if(!inst) return;
   let newStart = inst.startDate, newEnd = inst.endDate;
   if(edge === 'start'){
@@ -899,7 +1100,7 @@ function resizeInstance(instanceId, edge, targetDateKey){
     }
     newEnd = targetDateKey;
   }
-  instancesRef.child(instanceId).update({ startDate: newStart, endDate: newEnd });
+  db.ref(`instances/${cal}/${id}`).update({ startDate: newStart, endDate: newEnd });
 }
 
 /* ----------------------------------------------------------------
@@ -912,7 +1113,7 @@ function computeWeekLayout(weekDates){
   const weekStart = weekDates[0], weekEnd = weekDates[weekDates.length - 1];
 
   const overlapping = Object.entries(instances)
-    .filter(([, inst]) => jobs[inst.jobId] && inst.endDate >= weekStart && inst.startDate <= weekEnd)
+    .filter(([, inst]) => jobFor(inst) && inst.endDate >= weekStart && inst.startDate <= weekEnd)
     .map(([id, inst]) => {
       const clipStart = inst.startDate < weekStart ? weekStart : inst.startDate;
       const clipEnd = inst.endDate > weekEnd ? weekEnd : inst.endDate;
@@ -964,7 +1165,7 @@ function computeWeekLayout(weekDates){
    ---------------------------------------------------------------- */
 function buildInstanceRow(placement, dKey, col){
   const inst = placement.inst;
-  const job = jobs[inst.jobId];
+  const job = jobFor(inst);
 
   const isCapStart = dKey === inst.startDate;
   const isCapEnd = dKey === inst.endDate;
@@ -975,17 +1176,21 @@ function buildInstanceRow(placement, dKey, col){
   row.className = 'inst-row' + (isCapStart ? ' cap-start' : '') + (isCapEnd ? ' cap-end' : '');
   row.style.background = job.color || '#7fc8e8';
   row.draggable = true;
-  row.dataset.instanceId = placement.id;
 
-  const crewNames = Object.keys(inst.crewIds || {}).filter(cid => crews[cid]).map(cid => crews[cid].name);
+  const crewNames = Object.keys(inst.crewIds || {})
+    .map(cid => crews[`${inst._cal}__${cid}`])
+    .filter(Boolean)
+    .map(c => c.name);
   const crewLine = crewNames.join(', ');
-  row.title = job.name + (crewLine ? ' — ' + crewLine : '') + (job.link ? ' — ' + job.link : '');
+  const namePrefix = currentCalendar === 'all' ? `[${calAbbr(inst._cal)}] ` : '';
+  const fullName = namePrefix + job.name;
+  row.title = fullName + (crewLine ? ' — ' + crewLine : '') + (job.link ? ' — ' + job.link : '');
 
   let inner = '';
   if(isCapStart) inner += `<span class="handle left" draggable="true" title="Drag to change the start date"></span>`;
   if(showLabel){
     inner += `<span class="inst-text">`;
-    inner += `<span class="inst-name">${escapeHtml(job.name)}</span>`;
+    inner += `<span class="inst-name">${escapeHtml(fullName)}</span>`;
     if(crewLine) inner += `<span class="inst-crews">${escapeHtml(crewLine)}</span>`;
     inner += `</span>`;
   }
@@ -995,7 +1200,7 @@ function buildInstanceRow(placement, dKey, col){
 
   // Move the whole booking (drag the body of the row)
   row.addEventListener('dragstart', e => {
-    e.dataTransfer.setData('application/instance-move', JSON.stringify({ instanceId: placement.id, grabbedDateKey: dKey }));
+    e.dataTransfer.setData('application/instance-move', JSON.stringify({ cal: inst._cal, id: inst._id, grabbedDateKey: dKey }));
     e.dataTransfer.effectAllowed = 'move';
     row.classList.add('dragging');
   });
@@ -1005,7 +1210,7 @@ function buildInstanceRow(placement, dKey, col){
   row.addEventListener('click', e => {
     if(e.target.closest('.handle') || e.target.closest('.inst-x')) return;
     e.stopPropagation();
-    showJobPopup(placement.id, job, row);
+    showJobPopup(inst._cal, inst._id, job, row);
   });
 
   // Accept a crew dropped onto this booking
@@ -1019,11 +1224,14 @@ function buildInstanceRow(placement, dKey, col){
   row.addEventListener('dragleave', () => row.classList.remove('crew-hover'));
   row.addEventListener('drop', e => {
     row.classList.remove('crew-hover');
-    const crewId = e.dataTransfer.getData('application/crew');
-    if(crewId){
+    const raw = e.dataTransfer.getData('application/crew');
+    if(raw){
       e.preventDefault();
       e.stopPropagation(); // don't let the day cell underneath also handle this drop
-      assignCrewToInstance(placement.id, crewId);
+      try{
+        const { cal: crewCal, id: crewId } = JSON.parse(raw);
+        assignCrewToInstance(inst._cal, inst._id, crewCal, crewId);
+      }catch(err){ /* ignore malformed payload */ }
     }
   });
 
@@ -1031,7 +1239,7 @@ function buildInstanceRow(placement, dKey, col){
   if(leftHandle){
     leftHandle.addEventListener('dragstart', e => {
       e.stopPropagation();
-      e.dataTransfer.setData('application/instance-resize', JSON.stringify({ instanceId: placement.id, edge: 'start' }));
+      e.dataTransfer.setData('application/instance-resize', JSON.stringify({ cal: inst._cal, id: inst._id, edge: 'start' }));
       e.dataTransfer.effectAllowed = 'move';
     });
   }
@@ -1039,7 +1247,7 @@ function buildInstanceRow(placement, dKey, col){
   if(rightHandle){
     rightHandle.addEventListener('dragstart', e => {
       e.stopPropagation();
-      e.dataTransfer.setData('application/instance-resize', JSON.stringify({ instanceId: placement.id, edge: 'end' }));
+      e.dataTransfer.setData('application/instance-resize', JSON.stringify({ cal: inst._cal, id: inst._id, edge: 'end' }));
       e.dataTransfer.effectAllowed = 'move';
     });
   }
@@ -1047,7 +1255,7 @@ function buildInstanceRow(placement, dKey, col){
   if(removeBtn){
     removeBtn.addEventListener('click', e => {
       e.stopPropagation();
-      removeInstance(placement.id);
+      removeInstance(inst._cal, inst._id);
     });
   }
 
@@ -1256,24 +1464,27 @@ function buildDayCell(c, col, slots){
   });
   cell.addEventListener('drop', e => {
     cell.classList.remove('drop-hover');
-    const jobId = e.dataTransfer.getData('application/job');
+    const jobRaw = e.dataTransfer.getData('application/job');
     const moveRaw = e.dataTransfer.getData('application/instance-move');
     const resizeRaw = e.dataTransfer.getData('application/instance-resize');
 
-    if(jobId){
+    if(jobRaw){
       e.preventDefault();
-      scheduleJobOnDate(jobId, kKey);
+      try{
+        const { cal, id } = JSON.parse(jobRaw);
+        scheduleJobOnDate(cal, id, kKey);
+      }catch(err){ /* ignore malformed payload */ }
     } else if(moveRaw){
       e.preventDefault();
       try{
-        const { instanceId, grabbedDateKey } = JSON.parse(moveRaw);
-        moveInstance(instanceId, grabbedDateKey, kKey);
+        const { cal, id, grabbedDateKey } = JSON.parse(moveRaw);
+        moveInstance(cal, id, grabbedDateKey, kKey);
       }catch(err){ /* ignore malformed payload */ }
     } else if(resizeRaw){
       e.preventDefault();
       try{
-        const { instanceId, edge } = JSON.parse(resizeRaw);
-        resizeInstance(instanceId, edge, kKey);
+        const { cal, id, edge } = JSON.parse(resizeRaw);
+        resizeInstance(cal, id, edge, kKey);
       }catch(err){ /* ignore malformed payload */ }
     }
   });
@@ -1281,7 +1492,11 @@ function buildDayCell(c, col, slots){
   return cell;
 }
 
-renderCalendar();
+renderAll();
+migrateLegacyDataIfNeeded().then(attachCalendarListeners).catch(err => {
+  console.error('Legacy data migration failed:', err);
+  attachCalendarListeners(); // still attach listeners so the app works even if migration hit an error
+});
 </script>
 </body>
 </html>
