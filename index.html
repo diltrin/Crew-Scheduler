@@ -30,11 +30,7 @@
        jobs/stone,  jobs/tile,  jobs/shop
        instances/stone, instances/tile, instances/shop
      The "All" tab isn't a real calendar — it just reads and displays all
-     three at once. The first time this page loads against a database that
-     still has the OLD flat structure (crews/{id}, jobs/{id}, instances/{id}
-     with no stone/tile/shop underneath), it automatically moves that old
-     data onto the Tile calendar and keeps a timestamped backup copy under
-     "legacyBackup" in case you ever need to look back at it.
+     three at once.
   ============================================================================
 -->
 
@@ -579,7 +575,6 @@
      measurementId: "G-F9PY8Z3ESV"
    };
 
-
    IMPORTANT: databaseURL must be present and point at a Realtime
    Database (not Firestore).
 
@@ -706,9 +701,13 @@ const calPickerOverlay = document.getElementById('calPickerOverlay');
 const calPickerTitle = document.getElementById('calPickerTitle');
 let calPickerCallback = null;
 
-function openCalendarPicker(title, onPick){
+function openCalendarPicker(title, onPick, excludeCals){
   calPickerTitle.textContent = title;
   calPickerCallback = onPick;
+  const exclude = excludeCals || [];
+  calPickerOverlay.querySelectorAll('.modal-btn-row [data-cal]').forEach(btn => {
+    btn.style.display = exclude.includes(btn.dataset.cal) ? 'none' : '';
+  });
   calPickerOverlay.hidden = false;
 }
 function closeCalendarPicker(){
@@ -833,51 +832,6 @@ function renderAll(){
   renderCrews();
   renderJobs();
   renderCalendar();
-}
-
-/* ----------------------------------------------------------------
-   One-time migration: if this database still has the old flat
-   crews/{id}, jobs/{id}, instances/{id} shape from before calendars
-   existed, move all of it onto the Tile calendar and keep a backup.
-   ---------------------------------------------------------------- */
-async function migrateLegacyDataIfNeeded(){
-  const [crewsSnap, jobsSnap, instancesSnap] = await Promise.all([
-    db.ref('crews').once('value'),
-    db.ref('jobs').once('value'),
-    db.ref('instances').once('value'),
-  ]);
-  const crewsVal = crewsSnap.val();
-  const jobsVal = jobsSnap.val();
-  const instancesVal = instancesSnap.val();
-
-  const isLegacy = (val) => !!val && !CALENDARS.some(cal => cal in val);
-  const crewsIsLegacy = isLegacy(crewsVal);
-  const jobsIsLegacy = isLegacy(jobsVal);
-  const instancesIsLegacy = isLegacy(instancesVal);
-
-  if(!crewsIsLegacy && !jobsIsLegacy && !instancesIsLegacy) return;
-
-  const stamp = Date.now();
-  const writes = {};
-  if(crewsIsLegacy){
-    writes['crews/tile'] = crewsVal;
-    writes[`legacyBackup/${stamp}/crews`] = crewsVal;
-  }
-  if(jobsIsLegacy){
-    writes['jobs/tile'] = jobsVal;
-    writes[`legacyBackup/${stamp}/jobs`] = jobsVal;
-  }
-  if(instancesIsLegacy){
-    writes['instances/tile'] = instancesVal;
-    writes[`legacyBackup/${stamp}/instances`] = instancesVal;
-  }
-  await db.ref().update(writes);
-
-  const cleanup = {};
-  if(crewsIsLegacy) Object.keys(crewsVal).forEach(id => { cleanup[`crews/${id}`] = null; });
-  if(jobsIsLegacy) Object.keys(jobsVal).forEach(id => { cleanup[`jobs/${id}`] = null; });
-  if(instancesIsLegacy) Object.keys(instancesVal).forEach(id => { cleanup[`instances/${id}`] = null; });
-  if(Object.keys(cleanup).length) await db.ref().update(cleanup);
 }
 
 function attachCalendarListeners(){
@@ -1008,6 +962,17 @@ function removeJob(cal, id){
   });
 }
 
+function copyJobToCalendar(job, targetCal){
+  const payload = {
+    name: job.name,
+    color: job.color || '#7fc8e8',
+    link: job.link || '',
+    createdAt: Date.now()
+  };
+  db.ref(`jobs/${targetCal}`).push().set(payload);
+  showToast(`Copied "${job.name}" to ${capitalize(targetCal)}.`);
+}
+
 function renderJobs(){
   const list = document.getElementById('jobList');
   const ids = Object.keys(jobs);
@@ -1032,10 +997,19 @@ function renderJobs(){
         <button type="button" class="remove" title="Remove job" aria-label="Remove job">×</button>
       </div>
       ${linkHtml}
-      <div class="drag-hint">Drag onto a calendar date to schedule</div>
+      <div class="drag-hint">Drag onto a calendar date to schedule — click to copy to another calendar</div>
     `;
 
     card.querySelector('.remove').addEventListener('click', () => removeJob(job._cal, job._id));
+
+    card.addEventListener('click', e => {
+      if(e.target.closest('.remove') || e.target.closest('.job-link')) return;
+      const otherCals = CALENDARS.filter(c => c !== job._cal);
+      if(otherCals.length === 0) return;
+      openCalendarPicker(`Copy "${job.name}" to which calendar?`, (targetCal) => {
+        copyJobToCalendar(job, targetCal);
+      }, [job._cal]);
+    });
 
     card.addEventListener('dragstart', e => {
       e.dataTransfer.setData('application/job', JSON.stringify({ cal: job._cal, id: job._id }));
@@ -1493,10 +1467,7 @@ function buildDayCell(c, col, slots){
 }
 
 renderAll();
-migrateLegacyDataIfNeeded().then(attachCalendarListeners).catch(err => {
-  console.error('Legacy data migration failed:', err);
-  attachCalendarListeners(); // still attach listeners so the app works even if migration hit an error
-});
+attachCalendarListeners();
 </script>
 </body>
 </html>
